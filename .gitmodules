@@ -1,0 +1,7 @@
+[submodule "media/ramulator_wrapper/ramulator2"]
+	path = media/ramulator_wrapper/ramulator2
+	url = https://github.com/Yogaht/ramulator2.git
+	branch = v2.1
+[submodule "media/mqsim_wrapper/MQSim"]
+	path = media/mqsim_wrapper/MQSim
+	url = https://github.com/Yogaht/MQSim.git

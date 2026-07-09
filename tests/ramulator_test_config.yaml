@@ -1,0 +1,26 @@
+MemorySystem:
+  impl: GenericDRAM
+  clock_ratio: 1
+  ChannelMapper:
+    impl: CacheLineInterleave
+
+  DRAM:
+    impl: DDR5
+    org:
+      preset: DDR5_16Gb_x8
+      channel: 1
+      rank: 1
+    timing:
+      preset: DDR5_4800AN
+
+  Controllers:
+    - impl: GenericDDR
+      Scheduler:
+        impl: FRFCFS
+      RowPolicy:
+        impl: Open
+      AddrMapper:
+        impl: RoBaRaCoCh
+      RefreshManager:
+        impl: NoRefresh
+      plugins:
