@@ -1,0 +1,7 @@
+{
+    "backend": "analytic",
+    "capacity": 16.0,
+    "bandwidth": 100.0,
+    "dp": 1,
+    "instances": 1
+}

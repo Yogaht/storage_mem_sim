@@ -6,13 +6,10 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from memengine import (
-    MemoryType,
-    MemoryRequestType,
-    MemoryEngineConfig,
-    MemoryObject,
-    MemoryRequest,
-)
+from memory_type import MemoryType, MemoryRequestType
+from memory_config import MemoryEngineConfig
+from memory_object import MemoryObject
+from memory_request import MemoryRequest
 from media import MediaConfig, MediaSystemBackend
 
 

@@ -7,7 +7,7 @@ Capacity values are auto-derived from media_config.capacity.
 from dataclasses import dataclass, field
 from typing import Optional
 
-from .memory_type import MemoryType
+from memory_type import MemoryType
 
 
 @dataclass

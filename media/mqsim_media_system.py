@@ -16,7 +16,7 @@ import xml.etree.ElementTree as ET
 from typing import List, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from memengine.memory_request import MemoryRequest
+    from memory_request import MemoryRequest
 
 from .base_media import BaseMediaSystem
 from .media_config import MediaConfig
@@ -121,7 +121,7 @@ class MQSimMediaSystem(BaseMediaSystem):
                 addr = obj.addr
                 remaining_size = obj.size
 
-                from memengine.memory_type import MemoryRequestType
+                from memory_type import MemoryRequestType
                 mqsim_req_type = 1 if obj.req_type == MemoryRequestType.KREAD else 0
 
                 while remaining_size > 0:
@@ -175,7 +175,7 @@ class MQSimMediaSystem(BaseMediaSystem):
         Returns:
             MediaMetrics with time and request counts.
         """
-        from memengine.memory_type import MemoryRequestType
+        from memory_type import MemoryRequestType
 
         num_read = sum(
             1 for mr in mem_req_list

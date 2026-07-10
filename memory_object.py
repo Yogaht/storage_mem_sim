@@ -9,8 +9,8 @@ import math
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .memory_config import MemoryEngineConfig
-from .memory_type import MemoryRequestType
+    from memory_config import MemoryEngineConfig
+from memory_type import MemoryRequestType
 
 
 @dataclass

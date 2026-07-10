@@ -29,7 +29,10 @@ except ImportError:
     _ramulator_available = False
     sys.stderr.write(f"\n[WARNING] {_SETUP_MSG}\n")
 
-from memengine import MemoryEngineConfig, MemoryRequestType, MemoryObject, MemoryRequest
+from memory_type import MemoryRequestType, MemoryType
+from memory_config import MemoryEngineConfig
+from memory_object import MemoryObject
+from memory_request import MemoryRequest
 from media import (
     MediaConfig,
     MediaSystemBackend,

@@ -9,11 +9,11 @@ performance simulation to the configured MediaSystem backend.
 import math
 from typing import List
 
-from .memory_type import MemoryRequestType
-from .memory_config import MemoryEngineConfig
-from .memory_object import MemoryObject
-from .memory_request import MemoryRequest
-from .memory_metrics import MemoryMetrics, MemoryEngineMetrics
+from memory_type import MemoryRequestType
+from memory_config import MemoryEngineConfig
+from memory_object import MemoryObject
+from memory_request import MemoryRequest
+from memory_metrics import MemoryMetrics, MemoryEngineMetrics
 
 
 class MemoryEngine:
