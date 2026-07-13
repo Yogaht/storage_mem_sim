@@ -12,6 +12,7 @@ class MemoryType(Enum):
     HBM = "HBM"
     DDR = "DDR"
     SSD = "SSD"
+    HBF = "HBF"
 
 
 class MemoryRequestType(Enum):

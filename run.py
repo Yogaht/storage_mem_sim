@@ -12,7 +12,7 @@ import os
 from media import MediaConfig, MediaSystemBackend
 from memory_engine import MemoryEngine
 from memory_config import MemoryEngineConfig
-from memory_type import MemoryRequestType
+from memory_type import MemoryRequestType, MemoryType
 
 
 def parse_args():
@@ -27,35 +27,40 @@ def main():
     args = parse_args()
 
     with open(args.config) as f:
-        cfg = json.load(f)
+        raw = json.load(f)
 
-    backend = MediaSystemBackend.RAMULATOR if cfg["backend"] == "ramulator" else MediaSystemBackend.ANALYTIC
+    mc = raw["media_config"]
+    backend = MediaSystemBackend.RAMULATOR if mc["media_type"] == "ramulator" else MediaSystemBackend.ANALYTIC
+    mem_type = MemoryType[raw["mem_type"].upper()]
+
     media_cfg = MediaConfig(
         media_type=backend,
-        capacity=cfg.get("capacity", 32.0),
-        bandwidth=cfg.get("bandwidth", 100.0),
-        io_frequency=cfg.get("io_freq", 2400.0),
-        config_path=os.path.abspath(cfg["config"]) if cfg.get("config") else "",
+        capacity=mc.get("capacity", 32.0),
+        bandwidth=mc.get("bandwidth", 100.0),
+        config_path=os.path.abspath(mc["config"]) if mc.get("config") else "",
     )
 
     engine = MemoryEngine(MemoryEngineConfig(
+        memory_type=mem_type,
         media_config=media_cfg,
-        dp_size=cfg.get("dp", 1),
-        storage_instance_num=cfg.get("instances", 1),
+        dp_size=mc.get("dp", 1),
+        storage_instance_num=mc.get("instances", 1),
     ))
 
     ms = engine.media_system
     tx_bytes = getattr(ms, '_tx_bytes', args.size)
+    io_freq = getattr(ms, '_io_frequency_mhz', None)
 
     print("=" * 50)
-    print(f"Backend:   {cfg['backend']}")
-    if cfg["backend"] == "ramulator":
-        print(f"IO freq:   {cfg['io_freq']} MHz  |  tx_bytes: {tx_bytes}")
-        if cfg.get("config"):
-            print(f"YAML:      {cfg['config']}")
+    print(f"Mem type:  {mem_type.value}")
+    print(f"Backend:   {mc['media_type']}")
+    if mc["media_type"] == "ramulator":
+        print(f"Cycle freq:{io_freq:.0f} MHz  |  tx_bytes: {tx_bytes}")
+        if mc.get("config"):
+            print(f"YAML:      {mc['config']}")
     else:
-        print(f"Bandwidth: {cfg['bandwidth']} GB/s")
-    print(f"Capacity:  {cfg['capacity']} GB  |  DP: {cfg['dp']}  |  Inst: {cfg['instances']}")
+        print(f"Bandwidth: {mc['bandwidth']} GB/s")
+    print(f"Capacity:  {mc['capacity']} GB  |  DP: {mc['dp']}  |  Inst: {mc['instances']}")
     print("=" * 50)
 
     addr = engine.get_tensor_addr(args.num_requests * args.size)

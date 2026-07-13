@@ -47,8 +47,7 @@ def _make_ramulator():
         raise unittest.SkipTest(_SETUP_MSG)
     return RamulatorMediaSystem(MediaConfig(
         media_type=MediaSystemBackend.RAMULATOR,
-        granularity=64,
-        io_frequency=1000,
+        
     ))
 
 
@@ -57,7 +56,7 @@ class TestRamulatorMediaSystemDecomposition(unittest.TestCase):
 
     def setUp(self):
         self.system = _make_ramulator()
-        self.mem_config = MemoryEngineConfig(granularity=64)
+        self.mem_config = MemoryEngineConfig()
         self.g = self.system._tx_bytes
 
     def _make_memory_request(self, addr, size, req_type):
@@ -96,7 +95,7 @@ class TestRamulatorMediaSystemTraceFormat(unittest.TestCase):
 
     def setUp(self):
         self.system = _make_ramulator()
-        self.mem_config = MemoryEngineConfig(granularity=64)
+        self.mem_config = MemoryEngineConfig()
 
     def _make_memory_request(self, addr, size, req_type):
         obj = MemoryObject(addr, size, req_type, self.mem_config)
@@ -128,7 +127,7 @@ class TestRamulatorMediaSystemFull(unittest.TestCase):
 
     def setUp(self):
         self.system = _make_ramulator()
-        self.mem_config = MemoryEngineConfig(granularity=64)
+        self.mem_config = MemoryEngineConfig()
 
     def _make_memory_request(self, addr, size, req_type):
         obj = MemoryObject(addr, size, req_type, self.mem_config)

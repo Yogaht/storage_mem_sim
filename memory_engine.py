@@ -50,12 +50,15 @@ class MemoryEngine:
         self.global_addr: int = 0
         self.engine_metrics = MemoryEngineMetrics()
 
-        # Auto-create media system from config
-        if mem_config.media_config is not None:
-            from media.media_system_factory import MediaSystemFactory
-            self.media_system = MediaSystemFactory.create(mem_config.media_config)
-        else:
-            self.media_system = None
+        if mem_config.media_config is None:
+            raise ValueError("MemoryEngineConfig.media_config is required")
+        from media.media_system_factory import MediaSystemFactory
+        self.media_system = MediaSystemFactory.create(mem_config.media_config)
+
+        # Set granularity from backend: Ramulator uses _tx_bytes (e.g. 32),
+        # Analytic has no decomposition — use 64 (standard cache line).
+        tx = getattr(self.media_system, '_tx_bytes', None)
+        self.mem_config.granularity = tx if tx else 64
 
     def align_up(self, size: int) -> int:
         """Align size up to the configured granularity.

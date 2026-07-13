@@ -27,7 +27,7 @@ class TestAnalyticMediaSystem(unittest.TestCase):
             bandwidth=100.0,  # 100 GB/s
         )
         self.system = AnalyticMediaSystem(self.media_config)
-        self.mem_config = MemoryEngineConfig(granularity=64)
+        self.mem_config = MemoryEngineConfig(media_config=MediaConfig(media_type=MediaSystemBackend.ANALYTIC,bandwidth=100.0,capacity=1.0))
 
     def _make_memory_request(self, addr, size, req_type):
         """Helper: create a MemoryRequest for testing."""

@@ -1,8 +1,10 @@
 {
-    "backend": "ramulator",
-    "capacity": 32.0,
-    "io_freq": 2400,
-    "config": "configs/ramulator.yaml",
-    "dp": 1,
-    "instances": 1
+    "mem_type": "DDR",
+    "media_config": {
+        "media_type": "ramulator",
+        "capacity": 32.0,
+        "config": "configs/ramulator.yaml",
+        "dp": 1,
+        "instances": 1
+    }
 }

@@ -54,9 +54,9 @@ class TestMultiInstanceDistribution(unittest.TestCase):
         """Create a MemoryEngine with a fresh fake media system."""
         fake = FakeMediaSystem()
         engine = MemoryEngine(MemoryEngineConfig(
-            granularity=64,
             media_config=MediaConfig(
-                media_type=MediaSystemBackend.ANALYTIC, bandwidth=100.0),
+                media_type=MediaSystemBackend.ANALYTIC,
+                bandwidth=100.0, capacity=1.0),
         ))
         engine.mem_config.dp_size = dp_size
         engine.mem_config.storage_instance_num = instance_num

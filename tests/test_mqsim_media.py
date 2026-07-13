@@ -36,7 +36,7 @@ class TestMQSimMediaSystem(unittest.TestCase):
             config_path="dummy_ssd.xml",
         )
         self.system = MQSimMediaSystem(self.media_config)
-        self.mem_config = MemoryEngineConfig(granularity=64)
+        self.mem_config = MemoryEngineConfig(media_config=MediaConfig(media_type=MediaSystemBackend.ANALYTIC,bandwidth=100.0,capacity=1.0))
 
     def tearDown(self):
         tp = self.system.trace_output_path

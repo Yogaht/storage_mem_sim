@@ -91,6 +91,7 @@ class RamulatorMediaSystem(BaseMediaSystem):
     def __init__(self, config: MediaConfig):
         super().__init__(config)
         self._tx_bytes = config.granularity  # fallback
+        self._io_frequency_mhz: float = 0.0  # auto-derived
         self._yaml_text = FALLBACK_YAML
         self._init_ramulator()
 
@@ -110,12 +111,6 @@ class RamulatorMediaSystem(BaseMediaSystem):
                 "  cmake --build media/ramulator_wrapper/ramulator2/build -j$(sysctl -n hw.ncpu)"
             ) from e
 
-        if self.config.io_frequency <= 0:
-            raise ValueError(
-                f"io_frequency must be > 0 for Ramulator backend, "
-                f"got {self.config.io_frequency} MHz"
-            )
-
         if self.config.config_path:
             if not os.path.isfile(self.config.config_path):
                 raise FileNotFoundError(
@@ -127,11 +122,20 @@ class RamulatorMediaSystem(BaseMediaSystem):
 
         cfg = yaml.safe_load(self._yaml_text)
         dram_cfg = _find_dram(cfg)
-        # Resolve tx_bytes from the actual DRAM (presets + overrides)
+        # tx_bytes via Ramulator2's C++ formula:
+        #   get_tx_bytes() = internal_prefetch_size * channel_width / 8
         dram = _build_dram(dram_cfg)
         org, timing = dram.resolve()
-        self._tx_bytes = timing["nBL"] * (org["channel_width"] // 8)
-        logger.info("Ramulator2 ready (tx_bytes=%d).", self._tx_bytes)
+        self._tx_bytes = dram.internal_prefetch_size * org["channel_width"] // 8
+
+        # Auto-derive cycle frequency from DRAM spec.
+        # cycle_frequency_mhz = rate / 2 * tick_multiplier
+        #   rate: data rate in MT/s or Mbps (e.g., DDR5-4800 → 4800)
+        #   tick_multiplier: ticks per tCK (1 for DDR, 2 for HBM3 half-CK)
+        self._io_frequency_mhz = timing["rate"] / 2 * dram.tick_multiplier
+
+        logger.info("Ramulator2 ready (tx_bytes=%d, cycle_freq=%.0f MHz).",
+                    self._tx_bytes, self._io_frequency_mhz)
 
     # ------------------------------------------------------------------
     # Media request decomposition
@@ -145,10 +149,13 @@ class RamulatorMediaSystem(BaseMediaSystem):
         result: List[MediaRequest] = []
         for mem_req in mem_req_list:
             obj = mem_req.memory_object
-            num = math.ceil(obj.size / g)
+            # Align start down to tx boundary; cover the full range
+            start = (obj.addr // g) * g
+            end = obj.addr + obj.size
+            num = math.ceil((end - start) / g)
             for i in range(num):
                 result.append(MediaRequest(
-                    addr=obj.addr + i * g,
+                    addr=start + i * g,
                     req_type=obj.req_type.to_media_req_type(),
                 ))
         return result
@@ -184,7 +191,7 @@ class RamulatorMediaSystem(BaseMediaSystem):
             num_other_requests=0,
             cycles=cycles,
             num_media_reqs=len(media_reqs),
-            time=cycles * self.config.scale_factor,
+            time=cycles / (self._io_frequency_mhz * 1e6) if self._io_frequency_mhz > 0 else 0.0,
         )
         self.system_metrics.update_from_media(metrics)
         return metrics

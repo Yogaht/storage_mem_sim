@@ -127,11 +127,28 @@ MemorySystem:
     def _make_addrs(self, tx_bytes, count, stride=1):
         return [i * tx_bytes * stride for i in range(count)]
 
+    def test_ddr5_tx_bytes_matches(self):
+        """DDR5 _tx_bytes matches Ramulator2's C++ get_tx_bytes() formula."""
+        import ramulator
+        media_cfg = MediaConfig(
+            media_type=MediaSystemBackend.RAMULATOR,
+        )
+        wrapper = RamulatorMediaSystem(media_cfg)
+        wrapper._yaml_text = self.YAML_TEXT
+        wrapper._init_ramulator()
+
+        # C++ formula: get_tx_bytes() = internal_prefetch_size * channel_width / 8
+        dram = ramulator.dram.DDR5(org_preset="DDR5_16Gb_x8",
+                                   timing_preset="DDR5_4800AN")
+        org, _ = dram.resolve()
+        expected = dram.internal_prefetch_size * org["channel_width"] // 8
+        self.assertEqual(wrapper._tx_bytes, expected,
+                         f"DDR5 tx_bytes mismatch: wrapper={wrapper._tx_bytes}, expected={expected}")
+
     def test_ddr5_16_reads(self):
         """DDR5: 16 reads, same config → same cycles."""
         media_cfg = MediaConfig(
             media_type=MediaSystemBackend.RAMULATOR,
-            io_frequency=2400,
         )
         wrapper = RamulatorMediaSystem(media_cfg)
         wrapper._yaml_text = self.YAML_TEXT
@@ -142,7 +159,7 @@ MemorySystem:
         ops = ["LD"] * 16
 
         # Our wrapper
-        mem_cfg = MemoryEngineConfig(granularity=g)
+        mem_cfg = MemoryEngineConfig(media_config=MediaConfig(media_type=MediaSystemBackend.ANALYTIC,bandwidth=100.0,capacity=1.0))
         reqs = [
             MemoryRequest(memory_object=MemoryObject(a, g, MemoryRequestType.KREAD, mem_cfg))
             for a in addrs
@@ -163,7 +180,6 @@ MemorySystem:
         """DDR5: mixed reads and writes."""
         media_cfg = MediaConfig(
             media_type=MediaSystemBackend.RAMULATOR,
-            io_frequency=2400,
         )
         wrapper = RamulatorMediaSystem(media_cfg)
         wrapper._yaml_text = self.YAML_TEXT
@@ -174,7 +190,7 @@ MemorySystem:
         ops = ["LD"] * 4 + ["ST"] * 4
 
         # Our wrapper
-        mem_cfg = MemoryEngineConfig(granularity=g)
+        mem_cfg = MemoryEngineConfig(media_config=MediaConfig(media_type=MediaSystemBackend.ANALYTIC,bandwidth=100.0,capacity=1.0))
         types = [MemoryRequestType.KREAD] * 4 + [MemoryRequestType.KWRITE] * 4
         reqs = [
             MemoryRequest(memory_object=MemoryObject(a, g, t, mem_cfg))
@@ -196,7 +212,6 @@ MemorySystem:
         import yaml
         media_cfg = MediaConfig(
             media_type=MediaSystemBackend.RAMULATOR,
-            io_frequency=2400,
         )
 
         # Write temp YAML
@@ -213,7 +228,7 @@ MemorySystem:
             addrs = self._make_addrs(g, 8, stride=2)
             ops = ["LD"] * 8
 
-            mem_cfg = MemoryEngineConfig(granularity=g)
+            mem_cfg = MemoryEngineConfig(media_config=MediaConfig(media_type=MediaSystemBackend.ANALYTIC,bandwidth=100.0,capacity=1.0))
             reqs = [
                 MemoryRequest(memory_object=MemoryObject(a, g, MemoryRequestType.KREAD, mem_cfg))
                 for a in addrs
@@ -268,7 +283,6 @@ MemorySystem:
         """HBM3: 16 reads, same config → same cycles."""
         media_cfg = MediaConfig(
             media_type=MediaSystemBackend.RAMULATOR,
-            io_frequency=3200,  # 6400 Mbps → 3.2 GHz for HBM3
         )
         wrapper = RamulatorMediaSystem(media_cfg)
         wrapper._yaml_text = self.YAML_TEXT
@@ -278,7 +292,7 @@ MemorySystem:
         addrs = self._make_addrs(g, 16, stride=4)
         ops = ["LD"] * 16
 
-        mem_cfg = MemoryEngineConfig(granularity=g)
+        mem_cfg = MemoryEngineConfig(media_config=MediaConfig(media_type=MediaSystemBackend.ANALYTIC,bandwidth=100.0,capacity=1.0))
         reqs = [
             MemoryRequest(memory_object=MemoryObject(a, g, MemoryRequestType.KREAD, mem_cfg))
             for a in addrs
@@ -298,7 +312,6 @@ MemorySystem:
         """HBM3: larger batch of reads."""
         media_cfg = MediaConfig(
             media_type=MediaSystemBackend.RAMULATOR,
-            io_frequency=3200,
         )
         wrapper = RamulatorMediaSystem(media_cfg)
         wrapper._yaml_text = self.YAML_TEXT
@@ -308,7 +321,7 @@ MemorySystem:
         addrs = self._make_addrs(g, 32, stride=2)
         ops = ["LD"] * 32
 
-        mem_cfg = MemoryEngineConfig(granularity=g)
+        mem_cfg = MemoryEngineConfig(media_config=MediaConfig(media_type=MediaSystemBackend.ANALYTIC,bandwidth=100.0,capacity=1.0))
         reqs = [
             MemoryRequest(memory_object=MemoryObject(a, g, MemoryRequestType.KREAD, mem_cfg))
             for a in addrs
@@ -324,21 +337,22 @@ MemorySystem:
                          f"Wrapper={wrapper_metrics.cycles}, Direct={direct_cycles}")
 
     def test_hbm3_tx_bytes_matches(self):
-        """HBM3 _tx_bytes auto-computed correctly."""
+        """HBM3 _tx_bytes matches Ramulator2's C++ get_tx_bytes() formula."""
+        import ramulator
         media_cfg = MediaConfig(
             media_type=MediaSystemBackend.RAMULATOR,
-            io_frequency=3200,
         )
         wrapper = RamulatorMediaSystem(media_cfg)
         wrapper._yaml_text = self.YAML_TEXT
         wrapper._init_ramulator()
-        g = wrapper._tx_bytes
 
-        self.assertGreater(g, 0, "HBM3 tx_bytes should be > 0")
-        # HBM3 16Gb 8hi, 6400Mbps: channel_width depends on pseudo channel mode
-        # tx_bytes = nBL * (channel_width // 8), verify it's a power of 2
-        self.assertEqual(g & (g - 1), 0,
-                         f"HBM3 tx_bytes should be a power of 2, got {g}")
+        # C++ formula: get_tx_bytes() = internal_prefetch_size * channel_width / 8
+        dram = ramulator.dram.HBM3(org_preset="HBM3_16Gb_8hi",
+                                   timing_preset="HBM3_6400Mbps")
+        org, _ = dram.resolve()
+        expected = dram.internal_prefetch_size * org["channel_width"] // 8
+        self.assertEqual(wrapper._tx_bytes, expected,
+                         f"HBM3 tx_bytes mismatch: wrapper={wrapper._tx_bytes}, expected={expected}")
 
 
 if __name__ == "__main__":

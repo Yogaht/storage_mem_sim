@@ -22,7 +22,6 @@ class TestMemoryEngineAddressAllocation(unittest.TestCase):
     def setUp(self):
         self.engine = MemoryEngine(MemoryEngineConfig(
             memory_type=MemoryType.HBM,
-            granularity=64,
             media_config=MediaConfig(
                 media_type=MediaSystemBackend.ANALYTIC,
                 capacity=1.0,  # 1 GB → per_dp_capacity = 1GB
@@ -31,35 +30,39 @@ class TestMemoryEngineAddressAllocation(unittest.TestCase):
         ))
 
     def test_align_up(self):
-        self.assertEqual(self.engine.align_up(1), 64)
-        self.assertEqual(self.engine.align_up(63), 64)
-        self.assertEqual(self.engine.align_up(64), 64)
-        self.assertEqual(self.engine.align_up(65), 128)
+        g = self.engine.mem_config.granularity
+        self.assertEqual(self.engine.align_up(1), g)
+        self.assertEqual(self.engine.align_up(g - 1), g)
+        self.assertEqual(self.engine.align_up(g), g)
+        self.assertEqual(self.engine.align_up(g + 1), 2 * g)
         self.assertEqual(self.engine.align_up(0), 0)
 
     def test_get_tensor_addr_sequential(self):
-        addr1 = self.engine.get_tensor_addr(64)
-        addr2 = self.engine.get_tensor_addr(64)
+        g = self.engine.mem_config.granularity
+        addr1 = self.engine.get_tensor_addr(g)
+        addr2 = self.engine.get_tensor_addr(g)
         self.assertEqual(addr1, 0)
-        self.assertEqual(addr2, 64)
+        self.assertEqual(addr2, g)
 
     def test_get_tensor_addr_alignment(self):
+        g = self.engine.mem_config.granularity
         addr = self.engine.get_tensor_addr(100)
         self.assertEqual(addr, 0)
-        addr2 = self.engine.get_tensor_addr(64)
-        self.assertEqual(addr2, 128)
+        addr2 = self.engine.get_tensor_addr(g)
+        self.assertEqual(addr2, self.engine.align_up(100))
 
     def test_capacity_overflow(self):
-        cap = self.engine.mem_config.per_dp_capacity  # 1 GB
-        self.engine.get_tensor_addr(cap)               # exactly at limit
+        cap = self.engine.mem_config.per_dp_capacity
+        self.engine.get_tensor_addr(cap)
         self.engine.reset_addr()
         with self.assertRaises(OverflowError):
-            self.engine.get_tensor_addr(cap + 1)       # exceeds limit
+            self.engine.get_tensor_addr(cap + 1)
 
     def test_reset_addr(self):
-        self.engine.get_tensor_addr(4096)
+        g = self.engine.mem_config.granularity
+        self.engine.get_tensor_addr(g * 100)
         self.engine.reset_addr()
-        addr = self.engine.get_tensor_addr(64)
+        addr = self.engine.get_tensor_addr(g)
         self.assertEqual(addr, 0)
 
 
@@ -69,7 +72,6 @@ class TestMemoryEngineIssueRequest(unittest.TestCase):
     def setUp(self):
         self.engine = MemoryEngine(MemoryEngineConfig(
             memory_type=MemoryType.HBM,
-            granularity=64,
             dp_size=1,
             storage_instance_num=1,
             media_config=MediaConfig(
@@ -80,10 +82,9 @@ class TestMemoryEngineIssueRequest(unittest.TestCase):
         ))
 
     def test_issue_request_no_media_system_raises(self):
-        """Engine without media_config raises RuntimeError."""
-        engine = MemoryEngine(MemoryEngineConfig(granularity=64))
-        with self.assertRaises(RuntimeError):
-            engine.issue_request([0], [64], [MemoryRequestType.KREAD])
+        """Engine without media_config raises ValueError at construction."""
+        with self.assertRaises(ValueError):
+            MemoryEngine(MemoryEngineConfig())
 
     def test_issue_request_single(self):
         metrics = self.engine.issue_request(
@@ -127,15 +128,8 @@ class TestMemoryEngineConfig(unittest.TestCase):
     def test_default_config(self):
         config = MemoryEngineConfig()
         self.assertEqual(config.memory_type, MemoryType.HBM)
-        self.assertEqual(config.granularity, 64)
         self.assertEqual(config.dp_size, 1)
         self.assertEqual(config.storage_instance_num, 1)
-
-    def test_invalid_granularity(self):
-        with self.assertRaises(ValueError):
-            MemoryEngineConfig(granularity=0)
-        with self.assertRaises(ValueError):
-            MemoryEngineConfig(granularity=-1)
 
     def test_invalid_dp_size(self):
         with self.assertRaises(ValueError):

@@ -19,10 +19,10 @@ class TestMemoryObject(unittest.TestCase):
     def setUp(self):
         self.config = MemoryEngineConfig(
             memory_type=MemoryType.HBM,
-            granularity=64,
             media_config=MediaConfig(
                 media_type=MediaSystemBackend.ANALYTIC, capacity=1.0),
         )
+        self.config.granularity = 64  # hardcode for decomposition test
 
     def test_exact_granularity_size(self):
         """Size exactly one granularity unit → 1 media request."""
@@ -52,7 +52,8 @@ class TestMemoryRequest(unittest.TestCase):
     """Test MemoryRequest wrapping."""
 
     def setUp(self):
-        self.config = MemoryEngineConfig(granularity=64)
+        self.config = MemoryEngineConfig(media_config=MediaConfig(media_type=MediaSystemBackend.ANALYTIC,bandwidth=100.0,capacity=1.0))
+        self.config.granularity = 64  # hardcode for decomposition test
         self.obj = MemoryObject(
             addr=4096, size=128, req_type=MemoryRequestType.KWRITE, config=self.config
         )

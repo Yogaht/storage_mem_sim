@@ -43,4 +43,5 @@ class MemoryObject:
         self.addr = addr
         self.size = size
         self.req_type = req_type
-        self.media_req_num = math.ceil(size / config.granularity)
+        g = config.granularity
+        self.media_req_num = math.ceil(size / g) if g > 0 else 0

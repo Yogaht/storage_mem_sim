@@ -32,7 +32,7 @@ class MemoryEngineConfig:
     """
     memory_type: MemoryType = MemoryType.HBM
     media_config: Optional[object] = None   # MediaConfig, set before use
-    granularity: int = 64
+    granularity: int = field(default=0, init=False)  # set by MemoryEngine from backend
     dp_size: int = 1
     storage_instance_num: int = 1
 
@@ -42,8 +42,6 @@ class MemoryEngineConfig:
     capacity: int = field(default=0, init=False)
 
     def __post_init__(self):
-        if self.granularity <= 0:
-            raise ValueError(f"granularity must be positive, got {self.granularity}")
         if self.dp_size < 1:
             raise ValueError(f"dp_size must be >= 1, got {self.dp_size}")
         if self.storage_instance_num < 1:
