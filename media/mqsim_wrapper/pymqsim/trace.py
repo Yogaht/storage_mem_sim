@@ -414,45 +414,6 @@ def write_trace_file(
 # Internal helpers
 # =====================================================================
 
-def _cwdp_interleave(
-    addr: List[int], size: List[int], rtype: List[int],
-) -> Tuple[List[int], List[int], List[int]]:
-    """Re-order lines so consecutive entries hit distinct channels.
-
-    Groups by CWDP channel, then round-robins across channels.
-    This ensures all CHANNELS are utilised when there are multiple
-    merged trace lines.
-    """
-    if len(addr) <= 1:
-        return addr, size, rtype
-
-    entries = []
-    for a, s, t in zip(addr, size, rtype):
-        ch, _, _, _ = cwdp_decode(a // SECTOR_SIZE)
-        entries.append((a, s, t, ch))
-
-    entries.sort(key=lambda x: (x[3], x[0]))
-
-    queues: Dict[int, list] = {ch: [] for ch in range(CHANNELS)}
-    for a, s, t, ch in entries:
-        queues[ch].append((a, s, t))
-
-    out_a, out_s, out_t = [], [], []
-    while True:
-        emitted = False
-        for ch in range(CHANNELS):
-            if queues[ch]:
-                a, s, t = queues[ch].pop(0)
-                out_a.append(a)
-                out_s.append(s)
-                out_t.append(t)
-                emitted = True
-        if not emitted:
-            break
-
-    return out_a, out_s, out_t
-
-
 def _xml_int(name: str, element: ET.Element, tag: str) -> Dict[str, Tuple[int, int]]:
     """Extract int from XML element child *tag*, set module global if changed."""
     child = element.find(tag)
