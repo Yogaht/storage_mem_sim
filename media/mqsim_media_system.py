@@ -1,19 +1,15 @@
-"""MQSim media system — event-driven SSD simulation.
+"""MQSim media system — thin orchestration layer.
 
-Integrates MQSim by writing trace files and calling the MQSim C++ binary
-via subprocess. A native pybind11 binding is planned but not yet implemented.
-
-The MQSim binary must be built first:
-    cd media/mqsim_wrapper && pip install -e .
+  1. Build trace    →  pymqsim.trace.write_trace_file()
+  2. Build workload →  pymqsim.workload.generate_workload_xml()
+  3. Run simulation →  pymqsim.simulator.run_simulation()
+  4. Return MediaMetrics
 """
 
 import os
-import math
+import uuid
 import logging
-import tempfile
-import subprocess
-import xml.etree.ElementTree as ET
-from typing import List, TYPE_CHECKING
+from typing import List, Optional, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from memory_request import MemoryRequest
@@ -21,218 +17,180 @@ if TYPE_CHECKING:
 from .base_media import BaseMediaSystem
 from .media_config import MediaConfig
 from .media_metrics import MediaMetrics
+from .mqsim_wrapper.pymqsim.trace import TraceSliceConfig, write_trace_file
+from .mqsim_wrapper.pymqsim.workload import generate_workload_xml
+from .mqsim_wrapper.pymqsim.simulator import run_simulation
 
 logger = logging.getLogger(__name__)
 
-# Path to the MQSim binary (relative to this file)
-_MQSIM_BINARY = os.path.join(
-    os.path.dirname(__file__), "mqsim_wrapper", "MQSim", "MQSim"
+_DEFAULT_SSD_CONFIG = os.path.join(
+    os.path.dirname(__file__), "mqsim_wrapper", "default_ssdconfig.xml"
+)
+_DEFAULT_WORKLOAD_CONFIG = os.path.join(
+    os.path.dirname(__file__), "mqsim_wrapper", "default_workload.xml"
 )
 
 
 class MQSimMediaSystem(BaseMediaSystem):
-    """Event-driven SSD simulation backend using MQSim.
-
-    Converts engine-level MemoryRequests into an MQSim-compatible trace
-    file, patches the workload XML configuration, runs the MQSim binary
-    via subprocess, and parses output for bandwidth/latency metrics.
-
-    Trace format (per line):
-        0 0 <start_lba> <sectors> <req_type>
-    where req_type: 1 = read, 0 = write.
-
-    TODO: Replace subprocess with native pybind11 bindings for better
-          performance and tighter integration.
-
-    Usage:
-        config = MediaConfig(
-            media_type=MediaSystemBackend.MQSIM,
-            config_path="/path/to/ssdconfig.xml",
-        )
-        sys = MQSimMediaSystem(config)
-        sys.workload_config_path = "/path/to/workload.xml"
-        metrics = sys.handler_mem_request(mem_req_list)
-    """
-
-    # MQSim-specific constants (derived from SSD spec, not user-configurable)
-    _sector_bytes: int = 512
-    _max_sectors_per_nvme_io: int = 256
+    """SSD simulation backend — orchestrates trace → workload → simulate."""
 
     def __init__(self, config: MediaConfig):
         super().__init__(config)
-        self.ssd_config = config.config_path
-        self.workload_config_path: str = ""
-        self._trace_dir = tempfile.mkdtemp(prefix="mqsim_trace_")
-        self.trace_output_path = os.path.join(self._trace_dir, "trace.txt")
-        self._pybind_available = False
-        self._binary_available = os.path.isfile(_MQSIM_BINARY)
+        self._mqsim_ready: bool = False
+        self._last_result: Optional[object] = None
+        self._ssd_config_path: str = ""
+        self._workload_config_path: str = ""
+        self._trace_config: TraceSliceConfig = TraceSliceConfig()
         self._init_mqsim()
 
+    # ------------------------------------------------------------------
+    # Init
+    # ------------------------------------------------------------------
+
     def _init_mqsim(self):
-        """Check MQSim availability."""
-        if self._binary_available:
-            logger.info(f"MQSim binary found: {_MQSIM_BINARY}")
-        else:
-            logger.warning(
-                f"MQSim binary not found at {_MQSIM_BINARY}. "
-                "Build with: cd media/mqsim_wrapper && pip install -e ."
-            )
+        # resolve config paths (always, even without _mqsim)
+        ssd = self.config.ssd_config_path or _DEFAULT_SSD_CONFIG
+        self._ssd_config_path = (
+            os.path.abspath(ssd) if os.path.isfile(ssd)
+            else _DEFAULT_SSD_CONFIG
+        )
+        wl = self.config.workload_config_path or _DEFAULT_WORKLOAD_CONFIG
+        self._workload_config_path = (
+            os.path.abspath(wl) if os.path.isfile(wl) else ""
+        )
 
-        # Try pybind11 bindings (future)
+        # ---- load NAND geometry from SSD config XML ----
+        if os.path.isfile(self._ssd_config_path):
+            from .mqsim_wrapper.pymqsim.trace import (
+                load_from_ssdconfig_xml, load_from_workload_xml,
+            )
+            changes = load_from_ssdconfig_xml(self._ssd_config_path)
+            if changes:
+                logger.info("Loaded NAND geometry from %s: %s",
+                            self._ssd_config_path,
+                            ", ".join(f"{k}={v[1]}" for k, v in changes.items()))
+            if self._workload_config_path and os.path.isfile(self._workload_config_path):
+                res = load_from_workload_xml(self._workload_config_path)
+                logger.debug("Workload resource IDs: %s",
+                             {k: v for k, v in res.items() if v})
+
+        # check native pybind11 availability
         try:
-            import mqsim_backend
-            self._pybind_available = True
-            logger.info("MQSim pybind11 backend found.")
+            from .mqsim_wrapper.pymqsim import _mqsim  # noqa: F401
+            self._mqsim_ready = True
         except ImportError:
-            self._pybind_available = False
+            self._mqsim_ready = False
 
-    def _addr_to_lba(self, addr: int) -> int:
-        """Convert byte address to LBA."""
-        return addr // self._sector_bytes
+    # -- trace config ------------------------------------------------
 
-    def _size_to_sectors(self, size: int) -> int:
-        """Convert byte size to number of sectors (ceiling)."""
-        return math.ceil(size / self._sector_bytes)
+    @property
+    def trace_config(self) -> TraceSliceConfig:
+        return self._trace_config
 
-    def _write_trace_file(
+    @trace_config.setter
+    def trace_config(self, cfg: TraceSliceConfig):
+        self._trace_config = cfg
+
+    # ------------------------------------------------------------------
+    # Public helpers
+    # ------------------------------------------------------------------
+
+    def merge_sequential(
         self, mem_req_list: List["MemoryRequest"]
-    ) -> float:
-        """Write MemoryRequests to an MQSim trace file.
+    ) -> Tuple[List[int], List[int], List[int]]:
+        from .mqsim_wrapper.pymqsim.trace import merge_sequential as _m
+        return _m(mem_req_list)
 
-        Each request is split if it exceeds max_sectors_per_nvme_io.
-        Format: 0 0 <start_lba> <sectors> <req_type>
-
-        Args:
-            mem_req_list: List of MemoryRequest objects.
-
-        Returns:
-            Total bytes transferred.
-        """
-        max_sectors = self._max_sectors_per_nvme_io
-        total_bytes = 0
-
-        trace_dir = os.path.dirname(self.trace_output_path)
-        if trace_dir:
-            os.makedirs(trace_dir, exist_ok=True)
-
-        with open(self.trace_output_path, "w") as f:
-            for mem_req in mem_req_list:
-                obj = mem_req.memory_object
-                addr = obj.addr
-                remaining_size = obj.size
-
-                from memory_type import MemoryRequestType
-                mqsim_req_type = 1 if obj.req_type == MemoryRequestType.KREAD else 0
-
-                while remaining_size > 0:
-                    chunk_size = min(
-                        remaining_size,
-                        max_sectors * self._sector_bytes,
-                    )
-                    lba = self._addr_to_lba(addr)
-                    sectors = self._size_to_sectors(chunk_size)
-
-                    f.write(f"0 0 {lba} {sectors} {mqsim_req_type}\n")
-
-                    addr += chunk_size
-                    remaining_size -= chunk_size
-                    total_bytes += chunk_size
-
-        return total_bytes
-
-    def _patch_workload_xml(self):
-        """Patch the file path in the workload XML configuration."""
-        if not self.workload_config_path:
-            logger.warning("No workload_config_path set; skipping XML patch.")
-            return
-
-        try:
-            tree = ET.parse(self.workload_config_path)
-            root = tree.getroot()
-            for elem in root.iter("File_Path"):
-                elem.text = self.trace_output_path
-            tree.write(
-                self.workload_config_path,
-                xml_declaration=True,
-                encoding="utf-8",
-            )
-        except Exception as e:
-            logger.error(f"Failed to patch workload XML: {e}")
+    # ------------------------------------------------------------------
+    # Main entry
+    # ------------------------------------------------------------------
 
     def handler_mem_request(
         self, mem_req_list: List["MemoryRequest"]
     ) -> MediaMetrics:
-        """Run SSD simulation on the given memory requests.
-
-        1. Write MemoryRequests to trace file.
-        2. Patch workload XML with trace path.
-        3. Run MQSim binary via subprocess.
-        4. Parse output for time estimation.
-
-        Args:
-            mem_req_list: List of MemoryRequest objects.
-
-        Returns:
-            MediaMetrics with time and request counts.
-        """
+        """Orchestrate: trace → workload → simulate → metrics."""
         from memory_type import MemoryRequestType
 
         num_read = sum(
             1 for mr in mem_req_list
-            if mr.memory_object.req_type == MemoryRequestType.KREAD
-        )
+            if mr.memory_object.req_type == MemoryRequestType.KREAD)
         num_write = len(mem_req_list) - num_read
 
-        total_bytes = self._write_trace_file(mem_req_list)
-        self._patch_workload_xml()
+        if not mem_req_list:
+            m = MediaMetrics()
+            self.system_metrics.update_from_media(m)
+            return m
+
+        # output directory
+        trace_dir = os.path.join(
+            os.path.dirname(__file__), "mqsim_wrapper", "trace")
+        os.makedirs(trace_dir, exist_ok=True)
+
+        rid = uuid.uuid4().hex[:12]
+        trace_path = os.path.join(trace_dir, f"mqsim_trace_{rid}.txt")
+        workload_path = os.path.join(trace_dir, f"mqsim_workload_{rid}.xml")
+
+        # 1. write trace
+        total_bytes, trace_lines = write_trace_file(
+            mem_req_list, trace_path, self._trace_config)
+
+        # 2. write workload XML (replace File_Path in template)
+        generate_workload_xml(trace_path, workload_path,
+                              self._workload_config_path)
+
+        print(f"[MQSim] trace:    {os.path.abspath(trace_path)}  "
+              f"({trace_lines} lines)")
+        print(f"[MQSim] workload: {os.path.abspath(workload_path)}")
+
+        # 3. run simulation
+        try:
+            result = run_simulation(
+                trace_path=trace_path,
+                ssd_config_path=self._ssd_config_path,
+                workload_xml_path=workload_path,
+                output_dir=trace_dir,
+            )
+        except FileNotFoundError:
+            raise RuntimeError(
+                "MQSim simulation engine not available.\n\n"
+                "Build steps (WSL / Linux):\n"
+                "  sudo apt install cmake build-essential python3-dev\n"
+                "  cd media/mqsim_wrapper && pip install -e ."
+            ) from None
+        self._last_result = result
 
         total_time = 0.0
+        if result.total_time_ns > 0:
+            total_time = result.total_time_ns / 1e9
+        elif result.bandwidth_bytes_per_sec > 0:
+            total_time = total_bytes / result.bandwidth_bytes_per_sec
 
-        # Try pybind11 bindings first (future), then fall back to subprocess
-        if self._pybind_available:
-            try:
-                import mqsim_backend
-                result = mqsim_backend.MQSimAdapter.run(
-                    self.ssd_config, self.workload_config_path
-                )
-                bandwidth_bps = result.bandwidth_bytes_per_sec
-                if bandwidth_bps > 0:
-                    total_time = total_bytes / bandwidth_bps
-            except Exception as e:
-                logger.error(f"MQSim pybind11 run failed: {e}")
-        elif self._binary_available and self.ssd_config and self.workload_config_path:
-            try:
-                cmd = [
-                    _MQSIM_BINARY,
-                    "-i", self.ssd_config,
-                    "-w", self.workload_config_path,
-                ]
-                logger.info(f"Running MQSim: {' '.join(cmd)}")
-                result = subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=300,  # 5-minute timeout
-                )
-                # MQSim output parsing is TODO — for now use a rough estimate
-                # based on reported bandwidth
-                logger.debug(f"MQSim stdout (last 500 chars): {result.stdout[-500:]}")
-                if result.returncode != 0:
-                    logger.error(f"MQSim exited with code {result.returncode}")
-                total_time = 0.0  # Placeholder until output parsing is implemented
-            except subprocess.TimeoutExpired:
-                logger.error("MQSim simulation timed out")
-            except Exception as e:
-                logger.error(f"MQSim subprocess failed: {e}")
+        logger.info("MQSim: %.1f ns avg latency, %.2f GB/s, %.0f IOPS",
+                    result.avg_latency_ns,
+                    result.bandwidth_bytes_per_sec / 1e9,
+                    result.total_iops)
 
         metrics = MediaMetrics(
             num_read_requests=num_read,
             num_write_requests=num_write,
-            num_other_requests=0,
-            cycles=0,
             num_media_reqs=len(mem_req_list),
             time=total_time,
+            bandwidth=result.bandwidth_bytes_per_sec,
+            iops=result.total_iops,
+            iops_read=result.iops_read,
+            iops_write=result.iops_write,
         )
-
         self.system_metrics.update_from_media(metrics)
         return metrics
+
+    # ------------------------------------------------------------------
+    # Properties
+    # ------------------------------------------------------------------
+
+    @property
+    def last_result(self):
+        return self._last_result
+
+    @property
+    def mqsim_available(self) -> bool:
+        return self._mqsim_ready

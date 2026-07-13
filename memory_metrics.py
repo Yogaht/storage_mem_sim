@@ -20,12 +20,16 @@ class MemoryMetrics:
                          storage instance.
         global_memory_reqs_num: Total engine-level requests across all
                                 DP ranks and storage instances.
+        iops: IOPS (from media backend).
+        bandwidth: Bandwidth in bytes/second (from media backend).
     """
     cycles: int = 0
     total_time: float = 0.0
     memory_scale_factor: int = 1
     memory_reqs_num: int = 0
     global_memory_reqs_num: int = 0
+    bandwidth: float = 0.0
+    iops: float = 0.0
 
 
 @dataclass
@@ -43,14 +47,16 @@ class MemoryEngineMetrics:
                                 across all DP ranks and instances.
         mem_metrics_list: History of per-request MemoryMetrics.
         avg_bandwidth: Cumulative bandwidth = total_bytes / total_time (B/s).
+        avg_iops: Cumulative IOPS = global_memory_reqs_num / total_time.
     """
     cycles: int = 0
     total_time: float = 0.0
     total_bytes: int = 0
     memory_reqs_num: int = 0
     global_memory_reqs_num: int = 0
-    mem_metrics_list: List[MemoryMetrics] = field(default_factory=list)
     avg_bandwidth: float = 0.0
+    avg_iops: float = 0.0
+    mem_metrics_list: List[MemoryMetrics] = field(default_factory=list)
 
     def update(self, metrics: MemoryMetrics, total_bytes: int):
         """Accumulate a single MemoryMetrics into the cumulative counters."""
@@ -63,3 +69,4 @@ class MemoryEngineMetrics:
 
         if self.total_time > 0:
             self.avg_bandwidth = self.total_bytes / self.total_time
+            self.avg_iops = self.global_memory_reqs_num / self.total_time

@@ -208,6 +208,8 @@ class MemoryEngine:
             total_time=total_media_metrics.time,
             memory_reqs_num=sim_req_count,
             global_memory_reqs_num=len(mem_reqs),
+            bandwidth=total_media_metrics.bandwidth,
+            iops=total_media_metrics.iops,
         )
 
         self.engine_metrics.update(mem_metrics, simulated_bytes)

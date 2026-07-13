@@ -1,0 +1,10 @@
+{
+    "backend": "mqsim",
+    "capacity": 512.0,
+    "ssd_config": "media/mqsim_wrapper/default_ssdconfig.xml",
+    "workload_config": "media/mqsim_wrapper/default_workload.xml",
+    "merge_contiguous": true,
+    "request_size": 131072,
+    "dp": 1,
+    "instances": 1
+}
