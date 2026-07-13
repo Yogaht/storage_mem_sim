@@ -5,7 +5,7 @@ Usage:
     python run.py -c configs/ramulator.json --num-requests 32
     python run.py -c configs/mqsim.json --num-requests 64 --size 131072
 
-All MQSim-specific parameters (request_size, io_pattern, etc.)
+All MQSim-specific parameters (merge_contiguous, request_size, etc.)
 are read from the JSON config file.  Command-line --num-requests and --size
 override the config values when provided.
 """
@@ -60,7 +60,6 @@ def main():
         # MQSim-specific
         ssd_config_path=os.path.abspath(cfg["ssd_config"]) if cfg.get("ssd_config") else "",
         workload_config_path=os.path.abspath(cfg["workload_config"]) if cfg.get("workload_config") else "",
-        io_pattern="sequential" if merge_contiguous else "random",
         request_size_bytes=request_size,
     )
 

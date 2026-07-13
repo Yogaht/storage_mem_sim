@@ -18,7 +18,7 @@ class MediaMetrics:
         num_other_requests: Number of other request types.
         cycles: Total cycles consumed (filled by Ramulator backend).
         num_media_reqs: Total number of media-level requests processed.
-        time: Simulation time in seconds (filled by backend).
+        time: Simulation time in seconds (filled by Analytic/MQSim backends).
         bandwidth: Bandwidth in bytes/second (from backend).
         iops: Total IOPS (from backend).
         iops_read: Read IOPS (from backend).
@@ -34,6 +34,18 @@ class MediaMetrics:
     iops: float = 0.0
     iops_read: float = 0.0
     iops_write: float = 0.0
+
+    def __add__(self, other: "MediaMetrics") -> "MediaMetrics":
+        """Combine two MediaMetrics by summing all fields."""
+        return MediaMetrics(
+            num_read_requests=self.num_read_requests + other.num_read_requests,
+            num_write_requests=self.num_write_requests + other.num_write_requests,
+            num_other_requests=self.num_other_requests + other.num_other_requests,
+            cycles=self.cycles + other.cycles,
+            num_media_reqs=self.num_media_reqs + other.num_media_reqs,
+            time=self.time + other.time,
+        )
+
 
 @dataclass
 class MediaSystemMetrics:

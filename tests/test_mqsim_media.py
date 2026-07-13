@@ -505,34 +505,22 @@ class TestMQSimMediaSystemHandler(unittest.TestCase):
         self.assertEqual(metrics.time, 0.0)
 
     def test_handler_raises_without_module(self):
-        """handler_mem_request raises RuntimeError when neither _mqsim
-        nor MQSim binary is available."""
-        from unittest import mock
-        from media.mqsim_wrapper.pymqsim import simulator as sim_mod
-
+        """handler_mem_request raises RuntimeError when _mqsim not built."""
         req = self._make_req(0, 512, MemoryRequestType.KREAD)
 
-        # Force both paths to fail: no native module, no binary
-        with mock.patch.object(sim_mod, "_get_native", return_value=None), \
-             mock.patch.object(sim_mod, "_find_mqsim_binary",
-                               side_effect=FileNotFoundError("no binary")):
-            with self.assertRaises(RuntimeError) as ctx:
-                self.system.handler_mem_request([req])
-        self.assertIn("MQSim simulation engine not available", str(ctx.exception))
+        self.system._mqsim_ready = False
+        with self.assertRaises(RuntimeError) as ctx:
+            self.system.handler_mem_request([req])
+        self.assertIn("_mqsim", str(ctx.exception))
         self.assertIn("pip install -e", str(ctx.exception))
 
     def test_handler_raises_shows_fix_instructions(self):
         """Error message includes build instructions."""
-        from unittest import mock
-        from media.mqsim_wrapper.pymqsim import simulator as sim_mod
-
         req = self._make_req(0, 512, MemoryRequestType.KREAD)
 
-        with mock.patch.object(sim_mod, "_get_native", return_value=None), \
-             mock.patch.object(sim_mod, "_find_mqsim_binary",
-                               side_effect=FileNotFoundError("no binary")):
-            with self.assertRaises(RuntimeError) as ctx:
-                self.system.handler_mem_request([req])
+        self.system._mqsim_ready = False
+        with self.assertRaises(RuntimeError) as ctx:
+            self.system.handler_mem_request([req])
         msg = str(ctx.exception)
         self.assertIn("pip install -e", msg)
         self.assertIn("media/mqsim_wrapper", msg)

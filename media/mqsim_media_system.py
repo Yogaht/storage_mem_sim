@@ -142,21 +142,17 @@ class MQSimMediaSystem(BaseMediaSystem):
               f"({trace_lines} lines)")
         print(f"[MQSim] workload: {os.path.abspath(workload_path)}")
 
-        # 3. run simulation
-        try:
-            result = run_simulation(
-                trace_path=trace_path,
-                ssd_config_path=self._ssd_config_path,
-                workload_xml_path=workload_path,
-                output_dir=trace_dir,
-            )
-        except FileNotFoundError:
+        # 3. run simulation (native pybind11)
+        if not self._mqsim_ready:
             raise RuntimeError(
-                "MQSim simulation engine not available.\n\n"
-                "Build steps (WSL / Linux):\n"
-                "  sudo apt install cmake build-essential python3-dev\n"
-                "  cd media/mqsim_wrapper && pip install -e ."
-            ) from None
+                "MQSim native module (_mqsim) not built.\n"
+                "Build: cd media/mqsim_wrapper && pip install -e ."
+            )
+        result = run_simulation(
+            ssd_config_path=self._ssd_config_path,
+            workload_xml_path=workload_path,
+            output_dir=trace_dir,
+        )
         self._last_result = result
 
         total_time = 0.0
