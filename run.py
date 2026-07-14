@@ -4,10 +4,6 @@ Usage:
     python run.py -c configs/analytic.json
     python run.py -c configs/ramulator.json --num-requests 32
     python run.py -c configs/mqsim.json --num-requests 64 --size 131072
-
-All MQSim-specific parameters (merge_contiguous, request_size, etc.)
-are read from the JSON config file.  Command-line --num-requests and --size
-override the config values when provided.
 """
 
 import argparse
@@ -17,7 +13,7 @@ import os
 from media import MediaConfig, MediaSystemBackend
 from memory_engine import MemoryEngine
 from memory_config import MemoryEngineConfig
-from memory_type import MemoryRequestType
+from memory_type import MemoryRequestType, MemoryType
 
 
 def parse_args():
@@ -34,76 +30,80 @@ def main():
     args = parse_args()
 
     with open(args.config) as f:
-        cfg = json.load(f)
+        raw = json.load(f)
+
+    mc = raw["media_config"]
+    mem_type = MemoryType[raw["mem_type"].upper()]
 
     # ---- backend ----
-    backend_name = cfg["backend"]
-    if backend_name == "ramulator":
+    media_type = mc["media_type"]
+    if media_type == "ramulator":
         backend = MediaSystemBackend.RAMULATOR
-    elif backend_name == "mqsim":
+    elif media_type == "mqsim":
         backend = MediaSystemBackend.MQSIM
     else:
         backend = MediaSystemBackend.ANALYTIC
 
-    # ---- MQSim parameters from JSON (with CLI overrides) ----
-    request_size = args.size or cfg.get("request_size", 131072)
-    num_requests = args.num_requests or cfg.get("num_requests", 64)
-    merge_contiguous = cfg.get("merge_contiguous", True)
+    # ---- common params (with CLI overrides) ----
+    num_requests = args.num_requests or mc.get("num_requests", 64)
+    request_size = args.size or mc.get("request_size", 64)
 
     # ---- build MediaConfig ----
     media_cfg = MediaConfig(
         media_type=backend,
-        capacity=cfg.get("capacity", 32.0),
-        bandwidth=cfg.get("bandwidth", 100.0),
-        io_frequency=cfg.get("io_freq", 2400.0),
-        config_path=os.path.abspath(cfg["config"]) if cfg.get("config") else "",
+        capacity=mc.get("capacity", 32.0),
+        bandwidth=mc.get("bandwidth", 100.0),
+        config_path=os.path.abspath(mc["config"]) if mc.get("config") else "",
         # MQSim-specific
-        ssd_config_path=os.path.abspath(cfg["ssd_config"]) if cfg.get("ssd_config") else "",
-        workload_config_path=os.path.abspath(cfg["workload_config"]) if cfg.get("workload_config") else "",
+        ssd_config_path=os.path.abspath(mc["ssd_config"]) if mc.get("ssd_config") else "",
+        workload_config_path=os.path.abspath(mc["workload_config"]) if mc.get("workload_config") else "",
         request_size_bytes=request_size,
     )
 
     engine = MemoryEngine(MemoryEngineConfig(
+        memory_type=mem_type,
         media_config=media_cfg,
-        dp_size=cfg.get("dp", 1),
-        storage_instance_num=cfg.get("instances", 1),
+        dp_size=mc.get("dp", 1),
+        storage_instance_num=mc.get("instances", 1),
     ))
 
     ms = engine.media_system
+    tx_bytes = getattr(ms, '_tx_bytes', request_size)
 
-    # ---- pass trace slicing config to MQSim backend ----
+    # ---- MQSim trace config ----
     if backend == MediaSystemBackend.MQSIM:
         from media.mqsim_wrapper.pymqsim import TraceSliceConfig
-        trace_cfg = TraceSliceConfig(
+        merge_contiguous = mc.get("merge_contiguous", True)
+        ms.trace_config = TraceSliceConfig(
             merge_contiguous=merge_contiguous,
             request_size=request_size)
-        ms.trace_config = trace_cfg
-
-    tx_bytes = getattr(ms, '_tx_bytes', request_size)
 
     # ---- status banner ----
     print("=" * 60)
-    print(f"Backend:     {backend_name}")
-    if backend_name == "ramulator":
-        print(f"IO freq:     {cfg['io_freq']} MHz  |  tx_bytes: {tx_bytes}")
-        if cfg.get("config"):
-            print(f"YAML:        {cfg['config']}")
-    elif backend_name == "mqsim":
-        print(f"Merge:       {merge_contiguous}")
-        print(f"Req size:    {request_size} B")
-        print(f"Num reqs:    {num_requests}")
-        if cfg.get("ssd_config"):
-            print(f"SSD config:  {cfg['ssd_config']}")
-        if cfg.get("workload_config"):
-            print(f"Workload:    {cfg['workload_config']}")
+    print(f"Mem type:   {mem_type.value}")
+    print(f"Backend:    {media_type}")
+    if media_type == "ramulator":
+        io_freq = getattr(ms, '_io_frequency_mhz', None)
+        print(f"IO freq:    {io_freq} MHz  |  tx_bytes: {tx_bytes}")
+        if mc.get("config"):
+            print(f"YAML:       {mc['config']}")
+    elif media_type == "mqsim":
+        print(f"Merge:      {mc.get('merge_contiguous', True)}")
+        print(f"Req size:   {request_size} B")
+        print(f"Num reqs:   {num_requests}")
+        if mc.get("ssd_config"):
+            print(f"SSD config: {mc['ssd_config']}")
+        if mc.get("workload_config"):
+            print(f"Workload:   {mc['workload_config']}")
         if hasattr(ms, 'mqsim_available'):
             status = "loaded" if ms.mqsim_available else "NOT BUILT"
-            print(f"_mqsim:      {status}")
+            print(f"_mqsim:     {status}")
             if not ms.mqsim_available:
                 print(f"  Build: cd media/mqsim_wrapper && pip install -e .")
     else:
-        print(f"Bandwidth:   {cfg['bandwidth']} GB/s")
-    print(f"Capacity:    {cfg['capacity']} GB  |  DP: {cfg.get('dp', 1)}  |  Inst: {cfg.get('instances', 1)}")
+        print(f"Bandwidth:  {mc.get('bandwidth', 100.0)} GB/s")
+    print(f"Capacity:   {mc.get('capacity', 32.0)} GB  |  "
+          f"DP: {mc.get('dp', 1)}  |  Inst: {mc.get('instances', 1)}")
     print("=" * 60)
 
     # ---- issue requests ----
@@ -117,19 +117,17 @@ def main():
     )
 
     # ---- results ----
-    eng_metrics = engine.get_engine_metrics()
-    print(f"Requests:   {num_requests} x {request_size}B → {metrics.memory_reqs_num} engine reqs")
+    print(f"Requests:  {num_requests} × {request_size}B → "
+          f"{metrics.memory_reqs_num} media reqs")
     if backend == MediaSystemBackend.RAMULATOR:
-        print(f"Cycles:     {metrics.cycles}")
-    print(f"Time:       {metrics.total_time * 1e9:.1f} ns")
-    print(f"Bandwidth:  {metrics.bandwidth / 1e9:.2f} GB/s")
-    print(f"IOPS:       {metrics.iops:.0f}")
+        print(f"Cycles:    {metrics.cycles}")
+    print(f"Time:      {metrics.total_time * 1e9:.1f} ns")
+    print(f"Bandwidth: {engine.get_engine_metrics().avg_bandwidth / 1e9:.2f} GB/s")
 
-    # MQSim-specific: latency from last simulation result
     if backend == MediaSystemBackend.MQSIM and hasattr(ms, 'last_result'):
         lr = ms.last_result
         if lr is not None and lr.avg_latency_ns > 0:
-            print(f"Read Lat:   {lr.avg_latency_ns:.1f} ns")
+            print(f"Read Lat:  {lr.avg_latency_ns:.1f} ns")
 
     print("=" * 60)
 
