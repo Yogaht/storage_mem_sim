@@ -15,9 +15,7 @@ Quick start:
 
 from .trace import (
     # Geometry constants
-    CHANNELS, SECTOR_SIZE, PAGE_SIZE_BYTES, SECTORS_PER_PAGE,
-    # CWDP helpers
-    cwdp_decode, cwdp_stride_for_pages, align_lba,
+    CHANNELS, SECTOR_SIZE, PAGE_SIZE_BYTES, SECTORS_PER_PAGE,align_lba,
     addr_to_lba, size_to_sectors,
     # XML loaders
     load_from_ssdconfig_xml, load_from_workload_xml,
@@ -52,8 +50,7 @@ __all__ = [
     "MQSimWorkload",
     # Geometry constants
     "CHANNELS", "SECTOR_SIZE", "PAGE_SIZE_BYTES", "SECTORS_PER_PAGE",
-    # CWDP helpers
-    "cwdp_decode", "cwdp_stride_for_pages", "align_lba",
+    "align_lba",
     "addr_to_lba", "size_to_sectors",
     # XML loaders
     "load_from_ssdconfig_xml", "load_from_workload_xml",

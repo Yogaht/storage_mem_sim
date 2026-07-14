@@ -35,9 +35,9 @@ from media import (
 # Helpers
 # ------------------------------------------------------------------
 
-def _make_memory_request(addr, size, req_type, granularity=64):
+def _make_memory_request(addr, size, req_type):
     """Create a MemoryRequest for testing."""
-    config = MemoryEngineConfig(granularity=granularity)
+    config = MemoryEngineConfig()
     obj = MemoryObject(addr, size, req_type, config)
     return MemoryRequest(memory_object=obj)
 
@@ -154,6 +154,8 @@ class TestAddressMerging(unittest.TestCase):
         # Write group: addr=4096, size=1024 (merged from 4096+4608)
         self.assertEqual(rtype, [1, 1, 0])
         self.assertEqual(len(addr), 3)
+        # All reads (type=1) emitted before writes (type=0)
+        self.assertEqual(addr, [0, 8192, 4096])
 
     def test_large_merge(self):
         """Large number of consecutive requests all merge into one."""
@@ -380,29 +382,17 @@ class TestConstantsXMLLoading(unittest.TestCase):
             "default_workload.xml")
 
     def setUp(self):
-        """Save original values and get a reference to the trace module."""
+        """Reset _loaded flag so each test starts fresh."""
         import media.mqsim_wrapper.pymqsim.trace as C
         self.trace = C
-        # Save originals to restore in tearDown
-        self._originals = {
-            name: getattr(C, name)
-            for name in ('CHANNELS', 'CHIPS_PER_CH', 'DIES_PER_CHIP',
-                         'PLANES_PER_DIE', 'PAGES_PER_BLOCK', 'PAGE_SIZE_BYTES',
-                         'SECTOR_SIZE', 'CHANNEL_BW_MBPS', 'NAND_tR_NS',
-                         'SECTORS_PER_PAGE', 'TOTAL_PLANES', 'TOTAL_CHANNEL_BW_MBPS')
-        }
-
-    def tearDown(self):
-        """Restore original constant values."""
-        C = self.trace
-        for name, val in self._originals.items():
-            setattr(C, name, val)
+        C._loaded = False
 
     def test_load_from_ssdconfig_xml(self):
         """Geometry is correctly parsed from default_ssdconfig.xml."""
         C = self.trace
-        changes = C.load_from_ssdconfig_xml(self._default_ssdconfig)
+        loaded = C.load_from_ssdconfig_xml(self._default_ssdconfig)
 
+        self.assertIn('CHANNELS', loaded)
         self.assertEqual(C.CHANNELS, 8)
         self.assertEqual(C.CHIPS_PER_CH, 4)
         self.assertEqual(C.DIES_PER_CHIP, 2)
@@ -411,6 +401,7 @@ class TestConstantsXMLLoading(unittest.TestCase):
         self.assertEqual(C.PAGE_SIZE_BYTES, 8192)
         self.assertEqual(C.CHANNEL_BW_MBPS, 333)
         self.assertEqual(C.NAND_tR_NS, 75000)
+        self.assertTrue(C._loaded)
 
     def test_load_from_ssdconfig_derived_values(self):
         """Derived values are recomputed after loading."""
@@ -421,16 +412,12 @@ class TestConstantsXMLLoading(unittest.TestCase):
         self.assertEqual(C.TOTAL_PLANES, 8 * 4 * 2 * 2)    # 128
         self.assertEqual(C.TOTAL_CHANNEL_BW_MBPS, 8 * 333) # 2664
 
-    def test_load_from_ssdconfig_returns_changes(self):
-        """load_from_ssdconfig_xml returns a dict of changes."""
+    def test_unloaded_raises(self):
+        """Functions raise RuntimeError if geometry not loaded."""
         C = self.trace
-        # First change the defaults so there's something to detect
-        C.CHANNELS = 4
-        C._recompute_derived()
-
-        changes = C.load_from_ssdconfig_xml(self._default_ssdconfig)
-        self.assertIn('CHANNELS', changes)
-        self.assertEqual(changes['CHANNELS'], (4, 8))
+        C._loaded = False
+        with self.assertRaises(RuntimeError):
+            C.align_lba(0)
 
     def test_load_missing_file_raises(self):
         """Missing XML file raises FileNotFoundError."""
@@ -438,33 +425,14 @@ class TestConstantsXMLLoading(unittest.TestCase):
         with self.assertRaises(FileNotFoundError):
             C.load_from_ssdconfig_xml("/nonexistent/ssdconfig.xml")
 
-    def test_cwdp_decode_after_load(self):
-        """cwdp_decode uses updated geometry after loading from XML."""
-        C = self.trace
-        C.load_from_ssdconfig_xml(self._default_ssdconfig)
-
-        # With default geometry: 8 ch, 4 chip/ch, 2 die/chip, 2 plane/die
-        # Pages are striped CWDP: page→(ch, chip, die, plane)
-        ch, chip, die, plane = C.cwdp_decode(0)
-        self.assertEqual(ch, 0)
-        self.assertEqual(chip, 0)
-        self.assertEqual(die, 0)
-        self.assertEqual(plane, 0)
-
-        # After one full round across all 128 planes (128 pages):
-        ch128, chip128, die128, plane128 = C.cwdp_decode(128 * C.SECTORS_PER_PAGE)
-        self.assertEqual((ch128, chip128, die128, plane128), (0, 0, 0, 0))
-
     def test_default_args_use_current_sector_size(self):
-        """addr_to_lba / size_to_sectors defaults track current SECTOR_SIZE."""
+        """addr_to_lba / size_to_sectors work after XML load."""
         C = self.trace
         C.load_from_ssdconfig_xml(self._default_ssdconfig)
-        # SECTOR_SIZE stays 512 in default XML
 
         self.assertEqual(C.addr_to_lba(0), 0)
         self.assertEqual(C.addr_to_lba(512), 1)
         self.assertEqual(C.addr_to_lba(1024), 2)
-
         self.assertEqual(C.size_to_sectors(0), 0)
         self.assertEqual(C.size_to_sectors(512), 1)
         self.assertEqual(C.size_to_sectors(513), 2)
@@ -493,7 +461,6 @@ class TestMQSimMediaSystemHandler(unittest.TestCase):
 
     def setUp(self):
         self.system = MQSimMediaSystem(_make_media_config(bandwidth=3.5))
-        self.mem_config = MemoryEngineConfig(granularity=64)
 
     def _make_req(self, addr, size, req_type):
         return _make_memory_request(addr, size, req_type)
@@ -710,6 +677,136 @@ class TestFullPipelineIOPS(unittest.TestCase):
         # IOPS * time ≈ request count (all-at-once arrival)
         iops_requests = metrics.iops * metrics.time
         self.assertAlmostEqual(iops_requests / n, 1.0, delta=0.5)
+
+
+# ------------------------------------------------------------------
+# Native vs Binary cross-validation (requires both engines)
+# ------------------------------------------------------------------
+
+_mqsim_binary_available = False
+try:
+    _mqsim_binary = os.path.normpath(
+        os.path.join(os.path.dirname(__file__), "..",
+                     "media", "mqsim_wrapper", "MQSim", "MQSim"))
+    if os.path.isfile(_mqsim_binary) and os.access(_mqsim_binary, os.X_OK):
+        _mqsim_binary_available = True
+except Exception:
+    pass
+
+
+@unittest.skipUnless(_mqsim_available and _mqsim_binary_available,
+                     "Both native _mqsim and MQSim binary required")
+class TestNativeVsBinary(unittest.TestCase):
+    """Cross-validate: native pybind11 result == MQSim binary result."""
+
+    def setUp(self):
+        self.system = MQSimMediaSystem(_make_media_config(bandwidth=3.5))
+        # Resolve paths used by both native and binary
+        ssd = (self.system.config.ssd_config_path
+               or os.path.join(os.path.dirname(__file__), "..",
+                               "media", "mqsim_wrapper", "default_ssdconfig.xml"))
+        self._ssd_config_path = os.path.abspath(ssd)
+        self._trace_dir = os.path.join(
+            os.path.dirname(__file__), "..",
+            "media", "mqsim_wrapper", "trace")
+        os.makedirs(self._trace_dir, exist_ok=True)
+
+    def tearDown(self):
+        # Clean up trace files
+        for f in os.listdir(self._trace_dir):
+            if f.startswith("mqsim_"):
+                os.remove(os.path.join(self._trace_dir, f))
+
+    def _make_req(self, addr, size, req_type):
+        return _make_memory_request(addr, size, req_type)
+
+    def _write_trace_and_workload(self, reqs, name):
+        """Generate trace + workload XML, return (trace_path, workload_path)."""
+        from media.mqsim_wrapper.pymqsim import write_trace_file, generate_workload_xml
+        trace_path = os.path.join(self._trace_dir, f"mqsim_{name}.txt")
+        wl_path = os.path.join(self._trace_dir, f"mqsim_{name}.xml")
+        cfg = type(self.system.trace_config)(
+            merge_contiguous=True, request_size=131072)
+        write_trace_file(reqs, trace_path, cfg)
+        generate_workload_xml(trace_path, wl_path)
+        return trace_path, wl_path
+
+    def _run_native(self, wl_path):
+        """Run via native pybind11, return MQSimResult."""
+        from media.mqsim_wrapper.pymqsim import run_simulation
+        return run_simulation(
+            ssd_config_path=self._ssd_config_path,
+            workload_xml_path=wl_path,
+            output_dir=self._trace_dir,
+        )
+
+    def _run_binary(self, wl_path):
+        """Run via MQSim binary subprocess, return MQSimResult."""
+        import subprocess
+        from media.mqsim_wrapper.pymqsim import parse_mqsim_output
+
+        cmd = [_mqsim_binary, "-i", self._ssd_config_path, "-w", wl_path]
+        proc = subprocess.run(
+            cmd,
+            cwd=self._trace_dir,
+            input=b"\n",
+            capture_output=True,
+            timeout=300,
+        )
+        if proc.returncode != 0:
+            stderr = proc.stderr.decode(errors="replace")[-500:]
+            raise RuntimeError(
+                f"MQSim binary exited {proc.returncode}: {stderr}")
+        # Binary writes workload_scenario_1.xml in cwd
+        result_xml = os.path.join(self._trace_dir, "workload_scenario_1.xml")
+        return parse_mqsim_output(result_xml)
+
+    # ---- test cases ----
+
+    def test_sequential_128kb_matches(self):
+        """Native and binary produce same bandwidth for 8×128KB sequential."""
+        n = 8
+        reqs = [self._make_req(i * 131072, 131072, MemoryRequestType.KREAD)
+                for i in range(n)]
+        _, wl_path = self._write_trace_and_workload(reqs, "cmp_128k")
+
+        native_result = self._run_native(wl_path)
+        binary_result = self._run_binary(wl_path)
+
+        self.assertGreater(native_result.bandwidth_bytes_per_sec, 0)
+        self.assertGreater(binary_result.bandwidth_bytes_per_sec, 0)
+        # Bandwidth should match within 5%
+        ratio = (native_result.bandwidth_bytes_per_sec
+                 / binary_result.bandwidth_bytes_per_sec)
+        self.assertAlmostEqual(ratio, 1.0, delta=0.05,
+            msg=f"Native BW={native_result.bandwidth_bytes_per_sec/1e9:.2f} GB/s, "
+                f"Binary BW={binary_result.bandwidth_bytes_per_sec/1e9:.2f} GB/s")
+
+        self.assertGreater(native_result.total_iops, 0)
+        self.assertGreater(binary_result.total_iops, 0)
+
+    def test_random_4kb_matches(self):
+        """Native and binary produce similar IOPS for 32×4KB random."""
+        # Non-sequential addresses to simulate random
+        addrs = [i * 65536 for i in range(32)]  # Far apart = random-like
+        reqs = [self._make_req(a, 4096, MemoryRequestType.KREAD) for a in addrs]
+        self.system.trace_config = type(self.system.trace_config)(
+            merge_contiguous=False, request_size=4096)
+        _, wl_path = self._write_trace_and_workload(reqs, "cmp_4k")
+
+        # Restore trace config
+        self.system.trace_config = type(self.system.trace_config)(
+            merge_contiguous=True, request_size=131072)
+
+        native_result = self._run_native(wl_path)
+        binary_result = self._run_binary(wl_path)
+
+        self.assertGreater(native_result.total_iops, 0)
+        self.assertGreater(binary_result.total_iops, 0)
+        ratio = (native_result.total_iops / binary_result.total_iops)
+        self.assertAlmostEqual(ratio, 1.0, delta=0.05,
+            msg=f"Native IOPS={native_result.total_iops:.0f}, "
+                f"Binary IOPS={binary_result.total_iops:.0f}")
 
 
 if __name__ == "__main__":

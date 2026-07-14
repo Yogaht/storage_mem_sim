@@ -1,13 +1,15 @@
 """MQSim trace generation — geometry, CWDP addressing, theory, trace file I/O.
 
-This module combines NAND geometry constants (formerly constants.py), CWDP
-address decode, theory performance estimation, and trace file generation in
-one place.  Geometry can be reloaded at runtime from ssdconfig.xml via
-load_from_ssdconfig_xml().
+NAND geometry parameters (CHANNELS, PAGE_SIZE_BYTES, …) have **no defaults** —
+they must be loaded from an MQSim ssdconfig.xml via ``load_from_ssdconfig_xml()``
+before any trace functions are called.
 
 Quick start::
 
-    from pymqsim.trace import TraceSliceConfig, write_trace_file
+    from pymqsim.trace import (load_from_ssdconfig_xml,
+                                TraceSliceConfig, write_trace_file)
+
+    load_from_ssdconfig_xml("path/to/ssdconfig.xml")
 
     cfg = TraceSliceConfig(merge_contiguous=True, request_size=131072)
     total_bytes, lines = write_trace_file(mem_req_list, "trace.txt", cfg)
@@ -23,69 +25,135 @@ if TYPE_CHECKING:
     from memory_request import MemoryRequest
 
 # =====================================================================
-# NAND geometry (defaults match bundled default_ssdconfig.xml)
+# Protocol timing table — keyed by <Flash_Comm_Protocol> in ssdconfig.xml
+# =====================================================================
+# Values from MQSim source: NVDDR2 uses ONFI 3.x timings;
+# NVDDR3 uses ONFI 4.x timings (higher data rate, shorter cycles).
+#
+# SECTOR_SIZE is a universal MQSim constant (512 B per logical block)
+# and is set during XML loading even though it has no dedicated XML tag.
+
+_PROTOCOL_TABLE = {
+    "NVDDR2": {"CMD_TRANSFER_NS": 290, "DATA_SETUP_NS": 30},
+    "NVDDR3": {"CMD_TRANSFER_NS": 200, "DATA_SETUP_NS": 20},
+}
+
+# =====================================================================
+# Parameters loaded from ssdconfig.xml — all start as None
 # =====================================================================
 
-CHANNELS        = 8
-CHIPS_PER_CH    = 4
-DIES_PER_CHIP   = 2
-PLANES_PER_DIE  = 2
-PAGES_PER_BLOCK = 256
-PAGE_SIZE_BYTES = 8192
-SECTOR_SIZE     = 512
+CHANNELS:        int = None
+CHIPS_PER_CH:    int = None
+DIES_PER_CHIP:   int = None
+PLANES_PER_DIE:  int = None
+PAGES_PER_BLOCK: int = None
+PAGE_SIZE_BYTES: int = None
+CHANNEL_BW_MBPS: int = None
+NAND_tR_NS:      int = None
 
-# Timing
-CMD_TRANSFER_NS  = 290
-DATA_SETUP_NS    = 30
-NAND_tR_NS       = 75_000
-CHANNEL_BW_MBPS  = 333
+# Protocol-dependent (set from <Flash_Comm_Protocol>)
+CMD_TRANSFER_NS: int = None
+DATA_SETUP_NS:   int = None
 
-# Derived — call _recompute_derived() after changing any base value above
+# Universal constant (MQSim internal, always 512)
+SECTOR_SIZE: int = 512
+
+# Derived — computed after geometry is loaded
+SECTORS_PER_PAGE:      int = None
+TOTAL_PLANES:          int = None
+TOTAL_CHANNEL_BW_MBPS: int = None
+
+_loaded = False
+
+_GEOMETRY_NAMES = (
+    'CHANNELS', 'CHIPS_PER_CH', 'DIES_PER_CHIP', 'PLANES_PER_DIE',
+    'PAGES_PER_BLOCK', 'PAGE_SIZE_BYTES', 'CHANNEL_BW_MBPS', 'NAND_tR_NS',
+    'CMD_TRANSFER_NS', 'DATA_SETUP_NS',
+)
+
+
+def _require_loaded():
+    """Raise RuntimeError if NAND geometry has not been loaded from XML."""
+    if not _loaded:
+        raise RuntimeError(
+            "NAND geometry not loaded. "
+            "Call load_from_ssdconfig_xml(ssdconfig_path) first."
+        )
+
 
 def _recompute_derived():
-    global SECTORS_PER_PAGE, TOTAL_PLANES, TOTAL_CHANNEL_BW_MBPS
+    """Recompute derived constants after geometry has been set."""
+    global SECTORS_PER_PAGE, TOTAL_PLANES, TOTAL_CHANNEL_BW_MBPS, _loaded
+    if any(globals()[n] is None for n in _GEOMETRY_NAMES):
+        raise RuntimeError("Cannot recompute: some geometry values are still None")
     SECTORS_PER_PAGE = PAGE_SIZE_BYTES // SECTOR_SIZE
     TOTAL_PLANES = CHANNELS * CHIPS_PER_CH * DIES_PER_CHIP * PLANES_PER_DIE
     TOTAL_CHANNEL_BW_MBPS = CHANNELS * CHANNEL_BW_MBPS
-
-_recompute_derived()
+    _loaded = True
 
 
 # =====================================================================
-# XML loaders — reload geometry from ssdconfig.xml / workload.xml
+# XML loaders
 # =====================================================================
 
-def load_from_ssdconfig_xml(xml_path: str) -> Dict[str, Tuple[int, int]]:
-    """Parse NAND geometry from an MQSim ssdconfig.xml, update module globals.
+def load_from_ssdconfig_xml(xml_path: str) -> Dict[str, int]:
+    """Load NAND geometry from an MQSim ssdconfig.xml.
 
-    Returns ``{name: (old_value, new_value)}`` for every constant that changed.
-    Only XML tags that are present & parseable are applied.
+    All geometry constants are set from the XML.  Raises if any required
+    tag is missing or unparseable.
+
+    Returns a dict ``{name: value}`` of all loaded values.
     """
     if not os.path.isfile(xml_path):
         raise FileNotFoundError(f"SSD config not found: {xml_path}")
 
     tree = ET.parse(xml_path)
     root = tree.getroot()
-    changes: Dict[str, Tuple[int, int]] = {}
 
     dps = root.find('.//Device_Parameter_Set')
-    if dps is not None:
-        changes.update(_xml_int('CHANNELS', dps, 'Flash_Channel_Count'))
-        changes.update(_xml_int('CHIPS_PER_CH', dps, 'Chip_No_Per_Channel'))
-        changes.update(_xml_int('CHANNEL_BW_MBPS', dps, 'Channel_Transfer_Rate'))
+    if dps is None:
+        raise ValueError("Missing <Device_Parameter_Set> in SSD config")
 
     fps = root.find('.//Flash_Parameter_Set')
-    if fps is not None:
-        changes.update(_xml_int('DIES_PER_CHIP', fps, 'Die_No_Per_Chip'))
-        changes.update(_xml_int('PLANES_PER_DIE', fps, 'Plane_No_Per_Die'))
-        changes.update(_xml_int('PAGES_PER_BLOCK', fps, 'Page_No_Per_Block'))
-        changes.update(_xml_int('PAGE_SIZE_BYTES', fps, 'Page_Capacity'))
-        changes.update(_xml_int('NAND_tR_NS', fps, 'Page_Read_Latency_LSB'))
+    if fps is None:
+        raise ValueError("Missing <Flash_Parameter_Set> in SSD config")
 
-    if changes:
-        _recompute_derived()
+    loaded = {}
+    loaded.update(_xml_int('CHANNELS', dps, 'Flash_Channel_Count'))
+    loaded.update(_xml_int('CHIPS_PER_CH', dps, 'Chip_No_Per_Channel'))
+    loaded.update(_xml_int('CHANNEL_BW_MBPS', dps, 'Channel_Transfer_Rate'))
+    loaded.update(_xml_int('DIES_PER_CHIP', fps, 'Die_No_Per_Chip'))
+    loaded.update(_xml_int('PLANES_PER_DIE', fps, 'Plane_No_Per_Die'))
+    loaded.update(_xml_int('PAGES_PER_BLOCK', fps, 'Page_No_Per_Block'))
+    loaded.update(_xml_int('PAGE_SIZE_BYTES', fps, 'Page_Capacity'))
+    loaded.update(_xml_int('NAND_tR_NS', fps, 'Page_Read_Latency_LSB'))
 
-    return changes
+    # ---- protocol timing (from <Flash_Comm_Protocol>) ----
+    proto_el = dps.find('Flash_Comm_Protocol')
+    if proto_el is None or not (proto_el.text and proto_el.text.strip()):
+        proto_el = fps.find('Flash_Comm_Protocol')
+    protocol = proto_el.text.strip() if (proto_el is not None and proto_el.text) else "NVDDR2"
+    if protocol not in _PROTOCOL_TABLE:
+        raise ValueError(
+            f"Unknown Flash_Comm_Protocol: {protocol!r}. "
+            f"Supported: {list(_PROTOCOL_TABLE.keys())}"
+        )
+    proto_params = _PROTOCOL_TABLE[protocol]
+    globals()['CMD_TRANSFER_NS'] = proto_params['CMD_TRANSFER_NS']
+    globals()['DATA_SETUP_NS'] = proto_params['DATA_SETUP_NS']
+    loaded['CMD_TRANSFER_NS'] = proto_params['CMD_TRANSFER_NS']
+    loaded['DATA_SETUP_NS'] = proto_params['DATA_SETUP_NS']
+
+    # Verify all required names are loaded
+    missing = [n for n in _GEOMETRY_NAMES if n not in loaded]
+    if missing:
+        raise ValueError(
+            f"SSD config missing required tags: {missing}\n"
+            f"File: {xml_path}"
+        )
+
+    _recompute_derived()
+    return loaded
 
 
 def load_from_workload_xml(xml_path: str) -> Dict[str, list]:
@@ -118,55 +186,23 @@ def load_from_workload_xml(xml_path: str) -> Dict[str, list]:
 
     return result
 
-
-# =====================================================================
-# CWDP address decode  (Channel-Way-Die-Plane)
-# =====================================================================
-
-def cwdp_decode(lba_sector: int) -> Tuple[int, int, int, int]:
-    """LBA sector → (Channel, Chip, Die, Plane).
-
-    CWDP mapping: consecutive pages cycle through channels first, then
-    chips, then dies, then planes.  This is the addressing scheme used
-    by MQSim's PAGE_LEVEL address mapping with CWDP plane allocation.
-    """
-    page = lba_sector // SECTORS_PER_PAGE
-    channel = page % CHANNELS
-    chip    = (page // CHANNELS) % CHIPS_PER_CH
-    die     = (page // (CHANNELS * CHIPS_PER_CH)) % DIES_PER_CHIP
-    plane   = (page // (CHANNELS * CHIPS_PER_CH * DIES_PER_CHIP)) % PLANES_PER_DIE
-    return channel, chip, die, plane
-
-
-def cwdp_stride_for_pages(pages_per_request: int) -> int:
-    """Smallest stride ≥ *pages_per_request* that is co-prime with CHANNELS.
-
-    Why: when gcd(stride, CHANNELS) = d > 1, consecutive requests only hit
-    CHANNELS/d distinct channels → the other channels go idle → bandwidth
-    collapses.  A co-prime stride keeps all channels busy.
-    """
-    stride = pages_per_request
-    while math.gcd(stride, CHANNELS) != 1:
-        stride += 1
-    return stride
-
-
 # =====================================================================
 # Theory formulas  (peak IOPS / bandwidth estimation without simulation)
 # =====================================================================
 
 def theory_iops(request_size_bytes: int) -> float:
-    """Theoretical max IOPS under CWDP perfect interleaving (8-ch pipeline).
+    """Theoretical max IOPS under CWDP perfect interleaving.
 
     Pipeline model (NVDDR2):
       BusTime  = CMD(290) + Setup(30) + DataOut
       DataOut  = (S / 2) × (2000 / CHANNEL_BW_MBPS)  ns
-      PipeCycle = tR + 8 × BusTime
-      IOPS     = 64 / PipeCycle  (ns⁻¹ → s⁻¹)
+      PipeCycle = tR + CHANNELS × BusTime
+      IOPS     = (CHANNELS × PLANES_PER_DIE × … ) / PipeCycle
     """
+    _require_loaded()
     data_out_ns = (request_size_bytes / 2.0) * (2000.0 / CHANNEL_BW_MBPS)
     bus_time_ns = CMD_TRANSFER_NS + DATA_SETUP_NS + data_out_ns
-    pipeline_cycle_ns = NAND_tR_NS + 8 * bus_time_ns
+    pipeline_cycle_ns = NAND_tR_NS + CHANNELS * bus_time_ns
     return 64e9 / pipeline_cycle_ns
 
 
@@ -181,18 +217,20 @@ def theory_bus_utilization(request_size_bytes: int) -> float:
     U < 0.50 → IOPS-Bound      (bottleneck: NAND tR + CMD overhead)
     U > 0.90 → Bandwidth-Bound  (bottleneck: channel bus bandwidth)
     """
+    _require_loaded()
     data_out_ns = (request_size_bytes / 2.0) * (2000.0 / CHANNEL_BW_MBPS)
-    fixed_cost = NAND_tR_NS + 8 * (CMD_TRANSFER_NS + DATA_SETUP_NS)
-    variable_cost = 8 * data_out_ns
+    fixed_cost = NAND_tR_NS + CHANNELS * (CMD_TRANSFER_NS + DATA_SETUP_NS)
+    variable_cost = CHANNELS * data_out_ns
     return variable_cost / (fixed_cost + variable_cost)
 
 
 # =====================================================================
-# Convenience aliases (kept short — prefer inline addr//SECTOR_SIZE)
+# Convenience aliases
 # =====================================================================
 
 def align_lba(lba_sector: int) -> int:
     """Round LBA down to the nearest NAND page boundary."""
+    _require_loaded()
     return (lba_sector // SECTORS_PER_PAGE) * SECTORS_PER_PAGE
 
 
@@ -287,17 +325,11 @@ def build_trace_lines(
 ) -> Tuple[List[int], List[int], List[int]]:
     """MemoryRequests → (addr, size, type) trace-line triples.
 
-    Pipeline: merge → slice by request_size → CWDP-aware address distribution.
+    Pipeline: merge → slice by request_size → page-align.
 
-    Address distribution follows the same strategy as run_experiment.py::
-
-      - Sub-page (line_size < PAGE_SIZE_BYTES): multi-round traversal —
-        for each offset within a page, iterate all pages.  Consecutive
-        lines hit consecutive pages → consecutive channels.
-
-      - Super-page (line_size >= PAGE_SIZE_BYTES): CWDP-safe stride —
-        the gap between consecutive line starting pages is made co-prime
-        with CHANNELS, preventing channel collapse (see cwdp_stride_for_pages).
+    Trace lines faithfully record the addresses from MemoryRequests —
+    no CWDP stride correction or address redistribution is applied.
+    Addresses are written in their natural order.
     """
     from memory_type import MemoryRequestType
 
@@ -314,66 +346,19 @@ def build_trace_lines(
             for mr in mem_req_list
         ]
 
-    # 2. slice by request_size → determine line count + line size per chunk,
-    #    then distribute addresses CWDP-aware
+    # 2. slice by request_size, sequential addresses, page-align
     addr_list, size_list, type_list = [], [], []
 
     for base_addr, total_size, rtype in chunks:
         line_size = min(total_size, cfg.request_size)
-        n_lines = math.ceil(total_size / line_size)
-
-        if n_lines == 1:
-            # Single line — page-align the address for consistency
-            aligned = align_lba(base_addr // SECTOR_SIZE) * SECTOR_SIZE
+        offset = 0
+        while offset < total_size:
+            chunk = min(total_size - offset, line_size)
+            aligned = align_lba((base_addr + offset) // SECTOR_SIZE) * SECTOR_SIZE
             addr_list.append(aligned)
-            size_list.append(total_size)
+            size_list.append(chunk)
             type_list.append(rtype)
-            continue
-
-        start_page = base_addr // PAGE_SIZE_BYTES
-
-        if line_size < PAGE_SIZE_BYTES:
-            # ── sub-page: multi-round traversal ──
-            #   Round 0: page 0 offset 0, page 1 offset 0, …, page N-1 offset 0
-            #   Round 1: page 0 offset 1, page 1 offset 1, …
-            #   … until all lines are emitted.
-            #   Sequential pages → sequential channels via CWDP mapping.
-            lines_per_page = PAGE_SIZE_BYTES // line_size
-            num_pages = math.ceil(n_lines / lines_per_page)
-            emitted = 0
-            for off_idx in range(lines_per_page):
-                for pg in range(num_pages):
-                    if emitted >= n_lines:
-                        break
-                    addr = ((start_page + pg) * PAGE_SIZE_BYTES
-                            + off_idx * line_size)
-                    actual = min(line_size, total_size - emitted * line_size)
-                    addr_list.append(addr)
-                    size_list.append(actual)
-                    type_list.append(rtype)
-                    emitted += 1
-                if emitted >= n_lines:
-                    break
-        else:
-            # ── super-page: CWDP-safe stride ──
-            #   Each line spans pages_per_line pages. If the gap between
-            #   consecutive starting pages shares a factor d>1 with CHANNELS,
-            #   only CHANNELS/d channels are used → bandwidth collapses.
-            #   cwdp_stride_for_pages() bumps the stride to be co-prime
-            #   with CHANNELS, adding padding pages that are skipped.
-            pages_per_line = line_size // PAGE_SIZE_BYTES
-            stride_pages = cwdp_stride_for_pages(pages_per_line)
-            for i in range(n_lines):
-                addr = (start_page + i * stride_pages) * PAGE_SIZE_BYTES
-                actual = min(line_size, total_size - i * line_size)
-                addr_list.append(addr)
-                size_list.append(actual)
-                type_list.append(rtype)
-
-    # The CWDP-aware branches above already generate page-aligned starting
-    # addresses.  Sub-page offsets within a page are intentional and must
-    # NOT be aligned away.  Only the single-line fallthrough may have an
-    # unaligned base_addr — page-align it for consistency.
+            offset += chunk
 
     return addr_list, size_list, type_list
 
@@ -414,18 +399,22 @@ def write_trace_file(
 # Internal helpers
 # =====================================================================
 
-def _xml_int(name: str, element: ET.Element, tag: str) -> Dict[str, Tuple[int, int]]:
-    """Extract int from XML element child *tag*, set module global if changed."""
+def _xml_int(name: str, element: ET.Element, tag: str) -> Dict[str, int]:
+    """Extract int from XML element child *tag*, set module global.
+
+    Raises ValueError if the tag is missing or unparseable.
+    """
     child = element.find(tag)
     if child is None or not (child.text and child.text.strip()):
-        return {}
+        raise ValueError(
+            f"Missing or empty tag <{tag}> in SSD config"
+        )
     try:
         new_val = int(child.text.strip())
     except ValueError:
-        return {}
+        raise ValueError(
+            f"Tag <{tag}> has non-integer value: {child.text.strip()!r}"
+        ) from None
 
-    old_val = globals()[name]
-    if old_val == new_val:
-        return {}
     globals()[name] = new_val
-    return {name: (old_val, new_val)}
+    return {name: new_val}

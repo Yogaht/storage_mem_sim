@@ -64,11 +64,10 @@ class MQSimMediaSystem(BaseMediaSystem):
             from .mqsim_wrapper.pymqsim.trace import (
                 load_from_ssdconfig_xml, load_from_workload_xml,
             )
-            changes = load_from_ssdconfig_xml(self._ssd_config_path)
-            if changes:
-                logger.info("Loaded NAND geometry from %s: %s",
-                            self._ssd_config_path,
-                            ", ".join(f"{k}={v[1]}" for k, v in changes.items()))
+            loaded = load_from_ssdconfig_xml(self._ssd_config_path)
+            logger.info("Loaded NAND geometry from %s: %s",
+                        self._ssd_config_path,
+                        ", ".join(f"{k}={v}" for k, v in loaded.items()))
             if self._workload_config_path and os.path.isfile(self._workload_config_path):
                 res = load_from_workload_xml(self._workload_config_path)
                 logger.debug("Workload resource IDs: %s",
