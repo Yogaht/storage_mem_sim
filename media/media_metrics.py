@@ -19,6 +19,10 @@ class MediaMetrics:
         cycles: Total cycles consumed (filled by Ramulator backend).
         num_media_reqs: Total number of media-level requests processed.
         time: Simulation time in seconds (filled by Analytic/MQSim backends).
+        bandwidth: Bandwidth in bytes/second (from backend).
+        iops: Total IOPS (from backend).
+        iops_read: Read IOPS (from backend).
+        iops_write: Write IOPS (from backend).
     """
     num_read_requests: int = 0
     num_write_requests: int = 0
@@ -26,6 +30,10 @@ class MediaMetrics:
     cycles: int = 0
     num_media_reqs: int = 0
     time: float = 0.0
+    bandwidth: float = 0.0
+    iops: float = 0.0
+    iops_read: float = 0.0
+    iops_write: float = 0.0
 
     def __add__(self, other: "MediaMetrics") -> "MediaMetrics":
         """Combine two MediaMetrics by summing all fields."""
@@ -50,6 +58,10 @@ class MediaSystemMetrics:
         cycles: Accumulated cycles.
         num_media_reqs: Accumulated media request count.
         time: Accumulated time in seconds.
+        bandwidth: Accumulated bandwidth (B/s).
+        iops: Accumulated total IOPS.
+        iops_read: Accumulated read IOPS.
+        iops_write: Accumulated write IOPS.
         media_metrics_list: History of per-batch MediaMetrics.
     """
     num_read_requests: int = 0
@@ -58,6 +70,10 @@ class MediaSystemMetrics:
     cycles: int = 0
     num_media_reqs: int = 0
     time: float = 0.0
+    bandwidth: float = 0.0
+    iops: float = 0.0
+    iops_read: float = 0.0
+    iops_write: float = 0.0
     media_metrics_list: List[MediaMetrics] = field(default_factory=list)
 
     def update_from_media(self, metrics: MediaMetrics):
