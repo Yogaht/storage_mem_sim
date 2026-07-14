@@ -261,6 +261,7 @@ class TraceSliceConfig:
     """
     merge_contiguous: bool = True
     request_size: int = 131072
+    cwdp_aware: bool = False  # if True, apply CWDP stride correction to avoid channel collapse
 
     @classmethod
     def from_dict(cls, d: Dict | None) -> "TraceSliceConfig":
@@ -269,7 +270,18 @@ class TraceSliceConfig:
         return cls(
             merge_contiguous=d.get("merge_contiguous", True),
             request_size=d.get("request_size", 131072),
+            cwdp_aware=d.get("cwdp_aware", False),
         )
+
+
+# ---- CWDP helper (only used when cfg.cwdp_aware=True) ----
+
+def _cwdp_stride(pages_per_line: int) -> int:
+    """Smallest stride >= pages_per_line that is co-prime with CHANNELS."""
+    s = pages_per_line
+    while math.gcd(s, CHANNELS) != 1:
+        s += 1
+    return s
 
 
 # =====================================================================
@@ -346,19 +358,53 @@ def build_trace_lines(
             for mr in mem_req_list
         ]
 
-    # 2. slice by request_size, sequential addresses, page-align
+    # 2. slice by request_size, page-align, optional CWDP-aware distribution
     addr_list, size_list, type_list = [], [], []
 
     for base_addr, total_size, rtype in chunks:
         line_size = min(total_size, cfg.request_size)
-        offset = 0
-        while offset < total_size:
-            chunk = min(total_size - offset, line_size)
-            aligned = align_lba((base_addr + offset) // SECTOR_SIZE) * SECTOR_SIZE
-            addr_list.append(aligned)
-            size_list.append(chunk)
-            type_list.append(rtype)
-            offset += chunk
+        n_lines = math.ceil(total_size / line_size)
+
+        if not cfg.cwdp_aware or n_lines <= 1:
+            # ── default: sequential slicing ──
+            offset = 0
+            while offset < total_size:
+                chunk = min(total_size - offset, line_size)
+                aligned = align_lba((base_addr + offset) // SECTOR_SIZE) * SECTOR_SIZE
+                addr_list.append(aligned)
+                size_list.append(chunk)
+                type_list.append(rtype)
+                offset += chunk
+        else:
+            # ── cwdp_aware: CWDP stride correction ──
+            start_page = base_addr // PAGE_SIZE_BYTES
+            if line_size < PAGE_SIZE_BYTES:
+                # sub-page: multi-round traversal
+                lines_per_page = PAGE_SIZE_BYTES // line_size
+                num_pages = math.ceil(n_lines / lines_per_page)
+                emitted = 0
+                for off_idx in range(lines_per_page):
+                    for pg in range(num_pages):
+                        if emitted >= n_lines:
+                            break
+                        addr = ((start_page + pg) * PAGE_SIZE_BYTES + off_idx * line_size)
+                        actual = min(line_size, total_size - emitted * line_size)
+                        addr_list.append(addr)
+                        size_list.append(actual)
+                        type_list.append(rtype)
+                        emitted += 1
+                    if emitted >= n_lines:
+                        break
+            else:
+                # super-page: co-prime stride
+                pages_per_line = line_size // PAGE_SIZE_BYTES
+                stride_pages = _cwdp_stride(pages_per_line)
+                for i in range(n_lines):
+                    addr = (start_page + i * stride_pages) * PAGE_SIZE_BYTES
+                    actual = min(line_size, total_size - i * line_size)
+                    addr_list.append(addr)
+                    size_list.append(actual)
+                    type_list.append(rtype)
 
     return addr_list, size_list, type_list
 

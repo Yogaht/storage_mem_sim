@@ -6,7 +6,8 @@
         "ssd_config": "media/mqsim_wrapper/default_ssdconfig.xml",
         "workload_config": "media/mqsim_wrapper/default_workload.xml",
         "merge_contiguous": true,
-        "request_size": 131072,
+        "cwdp_aware": true,
+        "request_size": 8192,
         "dp": 1,
         "instances": 1
     }
