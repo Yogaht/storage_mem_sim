@@ -227,10 +227,11 @@ static bool simulate(const std::string& ssd_config_path,
                             + std::to_string(cntr) + ".xml";
             write_results(ssd, host, out);
 
-            // Restore cout momentarily to print flow statistics
+            // Restore cout momentarily to print flow statistics,
+            // then re-suppress without overwriting old_cout
             std::cout.rdbuf(old_cout);
             print_flow_stats(host);
-            old_cout = std::cout.rdbuf(sink.rdbuf());
+            std::cout.rdbuf(sink.rdbuf());
 
             // Capture stats for Python if requested
             if (out_stats != nullptr) {
@@ -240,10 +241,8 @@ static bool simulate(const std::string& ssd_config_path,
 
         ok = true;
     } catch (const std::exception& e) {
-        std::cerr << "[_mqsim] simulation error: " << e.what() << std::endl;
         ok = false;
     } catch (...) {
-        std::cerr << "[_mqsim] unknown simulation error" << std::endl;
         ok = false;
     }
 

@@ -4,3 +4,21 @@ __pycache__/
 *.so
 *.dylib
 build/
+.DS_Store
+
+# MQSim build artifacts
+media/mqsim_wrapper/build/
+media/mqsim_wrapper/MQSim/MQSim
+media/mqsim_wrapper/MQSim/build/
+media/mqsim_wrapper/trace/
+media/mqsim_wrapper/mqsim_output/
+media/mqsim_wrapper/mqsim_wrapper.egg-info/
+media/mqsim_wrapper/pymqsim/_mqsim*.so
+media/mqsim_wrapper/*.xml
+media/mqsim_wrapper/ext/
+
+# Ramulator2 build artifacts
+media/ramulator_wrapper/ramulator2/build/
+media/ramulator_wrapper/ramulator2/libramulator.*
+media/ramulator_wrapper/ramulator2/python/ramulator/_ramulator*.so
+media/ramulator_wrapper/ramulator2/ext/
