@@ -1,8 +1,8 @@
 """Build the Ramulator2 C++ extension.
 
-Installation:
-    pip install media/ramulator_wrapper/         # build C++ (cmake)
-    pip install -e media/ramulator_wrapper/ramulator2  # install Python package
+Installation (two steps):
+    pip install media/ramulator_wrapper/                # 1. cmake build
+    pip install -e media/ramulator_wrapper/ramulator2   # 2. install Python pkg
 """
 
 import os
@@ -60,7 +60,7 @@ setup(
     name="ramulator_wrapper",
     version="0.1.0",
     author="MemEngine",
-    description="Wrapper to build and install Ramulator2 with Python bindings",
+    description="Build the Ramulator2 C++ extension via CMake",
     cmdclass={
         "build_ext": RamulatorBuildExt,
         "build_py": RamulatorBuildPy,
