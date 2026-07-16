@@ -9,8 +9,6 @@ import sys
 import tempfile
 import unittest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
 _SETUP_MSG = (
     "Ramulator2 Python package is not installed. To install:\n"
     "  git submodule update --init media/ramulator_wrapper/ramulator2\n"
@@ -29,11 +27,13 @@ except ImportError:
     _ramulator_available = False
     sys.stderr.write(f"\n[WARNING] {_SETUP_MSG}\n")
 
-from memory_type import MemoryRequestType, MemoryType
-from memory_config import MemoryEngineConfig
-from memory_object import MemoryObject
-from memory_request import MemoryRequest
-from media import (
+from ..memory_type import MemoryType, MemoryRequestType
+from ..memory_config import MemoryEngineConfig
+from ..memory_object import MemoryObject
+from ..memory_request import MemoryRequest
+from ..memory_engine import MemoryEngine
+from ..memory_metrics import MemoryMetrics, MemoryEngineMetrics
+from ..media import (
     MediaConfig,
     MediaSystemBackend,
     RamulatorMediaSystem,

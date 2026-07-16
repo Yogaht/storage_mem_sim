@@ -12,7 +12,7 @@ import logging
 from typing import List, Optional, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from memory_request import MemoryRequest
+    from ..memory_request import MemoryRequest
 
 from .base_media import BaseMediaSystem
 from .media_config import MediaConfig
@@ -20,6 +20,7 @@ from .media_metrics import MediaMetrics
 from .mqsim_wrapper.pymqsim.trace import TraceSliceConfig, write_trace_file
 from .mqsim_wrapper.pymqsim.workload import generate_workload_xml
 from .mqsim_wrapper.pymqsim.simulator import run_simulation
+from ..memory_type import MemoryRequestType
 
 logger = logging.getLogger(__name__)
 
@@ -108,8 +109,6 @@ class MQSimMediaSystem(BaseMediaSystem):
         self, mem_req_list: List["MemoryRequest"]
     ) -> MediaMetrics:
         """Orchestrate: trace → workload → simulate → metrics."""
-        from memory_type import MemoryRequestType
-
         num_read = sum(
             1 for mr in mem_req_list
             if mr.memory_object.req_type == MemoryRequestType.KREAD)

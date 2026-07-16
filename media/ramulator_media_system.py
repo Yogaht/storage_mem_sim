@@ -16,7 +16,7 @@ import logging
 from typing import List, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from memory_request import MemoryRequest
+    from ..memory_request import MemoryRequest
 
 from .base_media import BaseMediaSystem
 from .media_config import MediaConfig

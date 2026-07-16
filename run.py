@@ -1,19 +1,14 @@
 """MemEngine — run memory simulation from a JSON config file.
 
 Usage:
-    python run.py -c configs/analytic.json
-    python run.py -c configs/ramulator.json --num-requests 32
-    python run.py -c configs/mqsim.json --num-requests 64 --size 131072
+    python -m storage_mem_sim.run -c configs/analytic.json
+    python run.py -c configs/ramulator.json
 """
 
 import argparse
 import json
 import os
-
-from media import MediaConfig, MediaSystemBackend
-from memory_engine import MemoryEngine
-from memory_config import MemoryEngineConfig
-from memory_type import MemoryRequestType, MemoryType
+import sys
 
 
 def parse_args():
@@ -27,6 +22,11 @@ def parse_args():
 
 
 def main():
+    from .media import MediaConfig, MediaSystemBackend
+    from .memory_engine import MemoryEngine
+    from .memory_config import MemoryEngineConfig
+    from .memory_type import MemoryRequestType, MemoryType
+
     args = parse_args()
 
     with open(args.config) as f:
@@ -72,7 +72,7 @@ def main():
 
     # ---- MQSim trace config ----
     if backend == MediaSystemBackend.MQSIM:
-        from media.mqsim_wrapper.pymqsim import TraceSliceConfig
+        from .media.mqsim_wrapper.pymqsim import TraceSliceConfig
         merge_contiguous = mc.get("merge_contiguous", True)
         ms.trace_config = TraceSliceConfig(
             merge_contiguous=merge_contiguous,
@@ -133,4 +133,12 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # Bootstrap: when run as 'python run.py', set up sys.path so the
+    # project is importable as a package, then run main() in that context.
+    _proj_root = os.path.dirname(os.path.abspath(__file__))
+    _parent = os.path.dirname(_proj_root)
+    if _parent not in sys.path:
+        sys.path.insert(0, _parent)
+    import importlib
+    importlib.import_module(
+        f"{os.path.basename(_proj_root)}.run").main()

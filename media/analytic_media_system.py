@@ -7,11 +7,12 @@ simulation. Suitable for rapid prototyping and early-stage analysis.
 from typing import List, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from memory_request import MemoryRequest
+    from ..memory_request import MemoryRequest
 
 from .base_media import BaseMediaSystem
 from .media_config import MediaConfig
 from .media_metrics import MediaMetrics
+from ..memory_type import MemoryRequestType
 
 
 class AnalyticMediaSystem(BaseMediaSystem):
@@ -60,7 +61,6 @@ class AnalyticMediaSystem(BaseMediaSystem):
             trans_time = size_bytes / self._bandwidth_bytes_per_sec
             total_time += trans_time
 
-            from memory_type import MemoryRequestType
             if obj.req_type == MemoryRequestType.KREAD:
                 num_read += 1
             elif obj.req_type == MemoryRequestType.KWRITE:

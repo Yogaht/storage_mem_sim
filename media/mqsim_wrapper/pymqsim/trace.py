@@ -22,7 +22,8 @@ from dataclasses import dataclass
 from typing import Dict, List, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from memory_request import MemoryRequest
+    from ....memory_request import MemoryRequest
+from ....memory_type import MemoryRequestType
 
 # =====================================================================
 # Protocol timing table — keyed by <Flash_Comm_Protocol> in ssdconfig.xml
@@ -298,8 +299,6 @@ def merge_sequential(
     if not mem_req_list:
         return [], [], []
 
-    from memory_type import MemoryRequestType
-
     reads  = [mr for mr in mem_req_list
               if mr.memory_object.req_type == MemoryRequestType.KREAD]
     writes = [mr for mr in mem_req_list
@@ -343,8 +342,6 @@ def build_trace_lines(
     no CWDP stride correction or address redistribution is applied.
     Addresses are written in their natural order.
     """
-    from memory_type import MemoryRequestType
-
     if not mem_req_list:
         return [], [], []
 

@@ -9,11 +9,11 @@ performance simulation to the configured MediaSystem backend.
 import math
 from typing import List
 
-from memory_type import MemoryRequestType
-from memory_config import MemoryEngineConfig
-from memory_object import MemoryObject
-from memory_request import MemoryRequest
-from memory_metrics import MemoryMetrics, MemoryEngineMetrics
+from .memory_type import MemoryRequestType
+from .memory_config import MemoryEngineConfig
+from .memory_object import MemoryObject
+from .memory_request import MemoryRequest
+from .memory_metrics import MemoryMetrics, MemoryEngineMetrics
 
 
 class MemoryEngine:
@@ -52,7 +52,7 @@ class MemoryEngine:
 
         if mem_config.media_config is None:
             raise ValueError("MemoryEngineConfig.media_config is required")
-        from media.media_system_factory import MediaSystemFactory
+        from .media.media_system_factory import MediaSystemFactory
         self.media_system = MediaSystemFactory.create(mem_config.media_config)
 
         # Set granularity from backend: Ramulator uses _tx_bytes (e.g. 32),

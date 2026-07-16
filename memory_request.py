@@ -8,8 +8,8 @@ from dataclasses import dataclass, field
 from typing import List, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from memory_object import MemoryObject
-    from media.media_request import MediaRequest
+    from .memory_object import MemoryObject
+    from .media.media_request import MediaRequest
 
 
 @dataclass

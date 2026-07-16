@@ -17,13 +17,13 @@ import sys
 import os
 import tempfile
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from memory_type import MemoryRequestType
-from memory_config import MemoryEngineConfig
-from memory_object import MemoryObject
-from memory_request import MemoryRequest
-from media import (
+from ..memory_type import MemoryType, MemoryRequestType
+from ..memory_config import MemoryEngineConfig
+from ..memory_object import MemoryObject
+from ..memory_request import MemoryRequest
+from ..memory_engine import MemoryEngine
+from ..memory_metrics import MemoryMetrics, MemoryEngineMetrics
+from ..media import (
     MediaConfig,
     MediaSystemBackend,
     MQSimMediaSystem,
@@ -187,7 +187,7 @@ class TestTraceGeneration(unittest.TestCase):
     """Test MQSim trace file generation."""
 
     def setUp(self):
-        from media.mqsim_wrapper.pymqsim import TraceSliceConfig
+        from ..media.mqsim_wrapper.pymqsim import TraceSliceConfig
         self.tmp_dir = tempfile.mkdtemp(prefix="mqsim_test_")
         # Use a small request_size so tests can verify slicing
         self.cfg_merge = TraceSliceConfig(
@@ -201,7 +201,7 @@ class TestTraceGeneration(unittest.TestCase):
 
     def test_addr_to_lba(self):
         """Address → LBA conversion."""
-        from media.mqsim_wrapper.pymqsim import addr_to_lba
+        from ..media.mqsim_wrapper.pymqsim import addr_to_lba
         self.assertEqual(addr_to_lba(0), 0)
         self.assertEqual(addr_to_lba(512), 1)
         self.assertEqual(addr_to_lba(1024), 2)
@@ -209,7 +209,7 @@ class TestTraceGeneration(unittest.TestCase):
 
     def test_size_to_sectors(self):
         """Size → sectors (ceiling)."""
-        from media.mqsim_wrapper.pymqsim import size_to_sectors
+        from ..media.mqsim_wrapper.pymqsim import size_to_sectors
         self.assertEqual(size_to_sectors(0), 0)
         self.assertEqual(size_to_sectors(512), 1)
         self.assertEqual(size_to_sectors(513), 2)
@@ -217,7 +217,7 @@ class TestTraceGeneration(unittest.TestCase):
 
     def test_write_trace_single_read(self):
         """Single read < request_size fits in one line."""
-        from media.mqsim_wrapper.pymqsim import write_trace_file
+        from ..media.mqsim_wrapper.pymqsim import write_trace_file
         req = _make_memory_request(0, 512, MemoryRequestType.KREAD)
         path = os.path.join(self.tmp_dir, "trace.txt")
         total_bytes, line_count = write_trace_file([req], path, self.cfg_merge)
@@ -230,7 +230,7 @@ class TestTraceGeneration(unittest.TestCase):
 
     def test_write_trace_single_write(self):
         """Single write: req_type=0."""
-        from media.mqsim_wrapper.pymqsim import write_trace_file
+        from ..media.mqsim_wrapper.pymqsim import write_trace_file
         req = _make_memory_request(0, 512, MemoryRequestType.KWRITE)
         path = os.path.join(self.tmp_dir, "trace.txt")
         write_trace_file([req], path, self.cfg_merge)
@@ -241,7 +241,7 @@ class TestTraceGeneration(unittest.TestCase):
 
     def test_write_trace_merged(self):
         """Merge two contiguous reads, still < request_size."""
-        from media.mqsim_wrapper.pymqsim import write_trace_file
+        from ..media.mqsim_wrapper.pymqsim import write_trace_file
         reqs = [
             _make_memory_request(0, 4096, MemoryRequestType.KREAD),
             _make_memory_request(4096, 4096, MemoryRequestType.KREAD),
@@ -257,7 +257,7 @@ class TestTraceGeneration(unittest.TestCase):
 
     def test_write_trace_sliced(self):
         """Large merged chunk is sliced by request_size."""
-        from media.mqsim_wrapper.pymqsim import write_trace_file
+        from ..media.mqsim_wrapper.pymqsim import write_trace_file
         reqs = [
             _make_memory_request(0, 8192, MemoryRequestType.KREAD),
             _make_memory_request(8192, 8192, MemoryRequestType.KREAD),
@@ -276,7 +276,7 @@ class TestTraceGeneration(unittest.TestCase):
 
     def test_write_trace_iops_mode_no_merge(self):
         """No merge: each request sliced individually by request_size."""
-        from media.mqsim_wrapper.pymqsim import write_trace_file
+        from ..media.mqsim_wrapper.pymqsim import write_trace_file
         # Two 10KB requests → each sliced into 8KB + 2KB = 4 lines total
         reqs = [
             _make_memory_request(0, 10240, MemoryRequestType.KREAD),
@@ -292,7 +292,7 @@ class TestTraceGeneration(unittest.TestCase):
 
     def test_write_trace_partial_merge(self):
         """Only contiguous requests merge; gaps prevent merging."""
-        from media.mqsim_wrapper.pymqsim import write_trace_file
+        from ..media.mqsim_wrapper.pymqsim import write_trace_file
         reqs = [
             _make_memory_request(0, 4096, MemoryRequestType.KREAD),
             _make_memory_request(4096, 4096, MemoryRequestType.KREAD),  # contiguous → merged
@@ -307,7 +307,7 @@ class TestTraceGeneration(unittest.TestCase):
 
     def test_write_trace_large_request(self):
         """Large request is sliced into request_size chunks."""
-        from media.mqsim_wrapper.pymqsim import write_trace_file
+        from ..media.mqsim_wrapper.pymqsim import write_trace_file
         large_size = 32768  # exactly 4 × 8192
         req = _make_memory_request(0, large_size, MemoryRequestType.KREAD)
         path = os.path.join(self.tmp_dir, "trace.txt")
@@ -328,13 +328,13 @@ class TestMQSimWorkload(unittest.TestCase):
 
     def test_default_workload(self):
         """Default workload factory returns an MQSimWorkload instance."""
-        from media.mqsim_wrapper.pymqsim import MQSimWorkload
+        from ..media.mqsim_wrapper.pymqsim import MQSimWorkload
         wl = MQSimWorkload.default()
         self.assertIsInstance(wl, MQSimWorkload)
 
     def test_generate_workload_xml(self):
         """generate_workload_xml creates a valid workload XML file."""
-        from media.mqsim_wrapper.pymqsim import generate_workload_xml
+        from ..media.mqsim_wrapper.pymqsim import generate_workload_xml
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "workload.xml")
             generate_workload_xml("/tmp/test_trace.txt", path)
@@ -350,7 +350,7 @@ class TestMQSimWorkload(unittest.TestCase):
 
     def test_build_trace_based_backward_compat(self):
         """MQSimWorkload.build_trace_based() still works (backward compat)."""
-        from media.mqsim_wrapper.pymqsim import MQSimWorkload
+        from ..media.mqsim_wrapper.pymqsim import MQSimWorkload
         wl = MQSimWorkload.default()
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "workload.xml")
@@ -383,7 +383,7 @@ class TestConstantsXMLLoading(unittest.TestCase):
 
     def setUp(self):
         """Reset _loaded flag so each test starts fresh."""
-        import media.mqsim_wrapper.pymqsim.trace as C
+        from ..media.mqsim_wrapper.pymqsim import trace as C
         self.trace = C
         C._loaded = False
 
@@ -510,7 +510,7 @@ class TestTraceLineCount(unittest.TestCase):
     # -- helpers -------------------------------------------------------
 
     def _write_and_count(self, reqs, merge, req_size=8192):
-        from media.mqsim_wrapper.pymqsim import write_trace_file, TraceSliceConfig
+        from ..media.mqsim_wrapper.pymqsim import write_trace_file, TraceSliceConfig
         cfg = TraceSliceConfig(merge_contiguous=merge, request_size=req_size)
         path = os.path.join(self.tmp_dir, "trace.txt")
         total_bytes, line_count = write_trace_file(reqs, path, cfg)
@@ -627,7 +627,7 @@ class TestTraceLineCount(unittest.TestCase):
 
 _mqsim_available = False
 try:
-    from media.mqsim_wrapper.pymqsim import check_mqsim_available
+    from ..media.mqsim_wrapper.pymqsim import check_mqsim_available
     _mqsim_available = check_mqsim_available()
 except Exception:
     pass
@@ -722,7 +722,7 @@ class TestNativeVsBinary(unittest.TestCase):
 
     def _write_trace_and_workload(self, reqs, name):
         """Generate trace + workload XML, return (trace_path, workload_path)."""
-        from media.mqsim_wrapper.pymqsim import write_trace_file, generate_workload_xml
+        from ..media.mqsim_wrapper.pymqsim import write_trace_file, generate_workload_xml
         trace_path = os.path.join(self._trace_dir, f"mqsim_{name}.txt")
         wl_path = os.path.join(self._trace_dir, f"mqsim_{name}.xml")
         cfg = type(self.system.trace_config)(
@@ -733,7 +733,7 @@ class TestNativeVsBinary(unittest.TestCase):
 
     def _run_native(self, wl_path):
         """Run via native pybind11, return MQSimResult."""
-        from media.mqsim_wrapper.pymqsim import run_simulation
+        from ..media.mqsim_wrapper.pymqsim import run_simulation
         return run_simulation(
             ssd_config_path=self._ssd_config_path,
             workload_xml_path=wl_path,
@@ -743,7 +743,7 @@ class TestNativeVsBinary(unittest.TestCase):
     def _run_binary(self, wl_path):
         """Run via MQSim binary subprocess, return MQSimResult."""
         import subprocess
-        from media.mqsim_wrapper.pymqsim import parse_mqsim_output
+        from ..media.mqsim_wrapper.pymqsim import parse_mqsim_output
 
         cmd = [_mqsim_binary, "-i", self._ssd_config_path, "-w", wl_path]
         proc = subprocess.run(
