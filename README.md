@@ -30,7 +30,8 @@ python run.py -c configs/analytic.json --num-requests 32 --size 128
 
 # 4. 如需运行 Ramulator2 后端
 git submodule update --init media/ramulator_wrapper/ramulator2
-pip install -e media/ramulator_wrapper/ramulator2
+pip install media/ramulator_wrapper/            # cmake 编译 C++ 扩展
+pip install -e media/ramulator_wrapper/ramulator2  # 安装 Python 包
 
 # 5. 运行 Ramulator2 示例
 python run.py -c configs/ramulator.json
