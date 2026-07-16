@@ -6,6 +6,8 @@ Preferred installation:
 
 import os
 import subprocess
+import sys
+import sysconfig
 from setuptools import find_packages, setup
 from setuptools.command.build_ext import build_ext
 from setuptools.command.build_py import build_py
@@ -21,6 +23,28 @@ RAMULATOR_ROOT = os.path.join(CURRENT_DIR, "ramulator2")
 _BUILT = False
 
 
+def _python_cmake_args():
+    """Force CMake to use the Python interpreter running pip."""
+    include_dir = sysconfig.get_path("include")
+    python_h = os.path.join(include_dir or "", "Python.h")
+    if not include_dir or not os.path.isfile(python_h):
+        raise RuntimeError(
+            "Python development headers were not found for the Python running pip:\n"
+            f"  executable: {sys.executable}\n"
+            f"  include:    {include_dir}\n"
+            "Install the matching development package, for example:\n"
+            "  sudo apt-get install python3-dev\n"
+            "or, for a specific interpreter:\n"
+            "  sudo apt-get install python3.11-dev"
+        )
+    return [
+        f"-DPython_EXECUTABLE={sys.executable}",
+        f"-DPython_INCLUDE_DIR={include_dir}",
+        "-DPython_FIND_STRATEGY=LOCATION",
+        "-DPython_FIND_VIRTUALENV=FIRST",
+    ]
+
+
 def _build_ramulator():
     """Run CMake configure + build."""
     global _BUILT
@@ -34,6 +58,7 @@ def _build_ramulator():
         "-DCMAKE_BUILD_TYPE=Release",
         "-DRAMULATOR_PYTHON_BINDINGS=ON",
     ]
+    cmake_args.extend(_python_cmake_args())
     gxx_path = "/opt/homebrew/bin/g++-14"
     if os.path.exists(gxx_path):
         cmake_args.append(f"-DCMAKE_CXX_COMPILER={gxx_path}")
