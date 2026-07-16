@@ -23,28 +23,29 @@ cd storage_mem_sim
 pip install pyyaml
 
 # 3. 运行 Analytic 示例
-python run.py -c configs/analytic.json
+cd ..
+python -m storage_mem_sim.run -c storage_mem_sim/configs/analytic.json
 
 # 可选：调整请求数量和单请求大小
-python run.py -c configs/analytic.json --num-requests 32 --size 128
+python -m storage_mem_sim.run -c storage_mem_sim/configs/analytic.json --num-requests 32 --size 128
 
 # 4. 如需运行 Ramulator2 后端
+cd storage_mem_sim
 git submodule update --init media/ramulator_wrapper/ramulator2
-pip install media/ramulator_wrapper/            # cmake 编译 C++ 扩展
-pip install -e media/ramulator_wrapper/ramulator2  # 安装 Python 包
+pip install -e media/ramulator_wrapper
 
 # 5. 运行 Ramulator2 示例
-python run.py -c configs/ramulator.json
+cd ..
+python -m storage_mem_sim.run -c storage_mem_sim/configs/ramulator.json
 
 # 6. 如需运行 MQSim 后端
+cd storage_mem_sim
 git submodule update --init media/mqsim_wrapper/MQSim
-cd media/mqsim_wrapper && pip install -e .
-cd ../..
+pip install -e media/mqsim_wrapper
 
 # 7. 运行 MQSim 示例（带宽 bound：合并 + 大 I/O）
-python run.py -c configs/mqsim.json --num-requests 64 --size 131072
+python -m storage_mem_sim.run -c storage_mem_sim/configs/mqsim.json --num-requests 64 --size 131072
 
 # 8. MQSim IOPS bound（不合并 + 小 I/O）
-python run.py -c configs/mqsim.json --num-requests 1024 --size 4096
+python -m storage_mem_sim.run -c storage_mem_sim/configs/mqsim.json --num-requests 1024 --size 4096
 ```
-
