@@ -154,14 +154,14 @@ class MQSimMediaSystem(BaseMediaSystem):
         self._last_result = result
 
         total_time = 0.0
-        if result.total_time_ns > 0:
-            total_time = result.total_time_ns / 1e9
+        if result.total_time_s > 0:
+            total_time = result.total_time_s
         elif result.bandwidth_bytes_per_sec > 0:
             total_time = total_bytes / result.bandwidth_bytes_per_sec
 
-        logger.info("MQSim: %.1f ns avg latency, %.2f GB/s, %.0f IOPS",
-                    result.avg_latency_ns,
-                    result.bandwidth_bytes_per_sec / 1e9,
+        logger.info("MQSim: %.1f s total_time, %.2f GB/s, %.0f IOPS",
+                    total_time,
+                    result.bandwidth_bytes_per_sec / (1024**3),
                     result.total_iops)
 
         metrics = MediaMetrics(
@@ -169,7 +169,7 @@ class MQSimMediaSystem(BaseMediaSystem):
             num_write_requests=num_write,
             num_media_reqs=len(mem_req_list),
             time=total_time,
-            bandwidth=result.bandwidth_bytes_per_sec,
+            bandwidth=result.bandwidth_bytes_per_sec / (1024**3),
             iops=result.total_iops,
             iops_read=result.iops_read,
             iops_write=result.iops_write,

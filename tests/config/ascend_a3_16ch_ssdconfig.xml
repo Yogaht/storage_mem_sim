@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Ascend A3 Flagship SSD config — 16CH + YMTC 232L Xtacking 3.0 TLC NAND
+  Target: Memblaze PBlaze7 7A46 class enterprise NVMe SSD
+  Refs: Memblaze PBlaze7 7A46 (16CH, YMTC 232L, 3.3M IOPS, 14GB/s)
+        TweakTown Review (2024)
+  Key differences vs 8CH variant:
+    Channels:  8  → 16
+    Planes:    384 → 768
+    Capacity:  ~7.8TB → ~15.6TB usable
+    CH BW tot: 12.8 → 25.6 GB/s
+    CMT:       8M → 16M entries
+  Capacity: 768 planes × 2304 blocks × 576 pages × 16KB ≈ 16.7 TB raw
+            ~15.6 TB usable (7% OP)
+
+  Peak specs (theory model — pymqsim.trace.theory_iops / theory_bandwidth_mbps):
+    Total CH BW:      25,600 MB/s  (25.6 GB/s, 16ch × 1600)
+    IOPS @  4KB:        785,000    (IOPS-bound,  bus util ~50.3%  → bottleneck: NAND tR)
+    IOPS @128KB:         47,400    (BW-bound,    bus util ~97.0%  → bottleneck: channel bus)
+    BW   @128KB:       6,208 MB/s  (6.2 GB/s)
+    NOTE:   Theory model shows LOWER IOPS than 8CH — pipeline_cycle_ns grows
+            with CHANNELS. This is a known model limitation; real 16CH controllers
+            achieve higher throughput via parallel channel operation.
+    Host interface:   PCIe Gen5 x4 ≅ 16 GB/s
+    Real-world ref:   ~3,300K IOPS / ~14,000 MB/s (Memblaze PBlaze7 7A46)
+-->
+<Execution_Parameter_Set>
+    <Host_Parameter_Set>
+        <PCIe_Lane_Bandwidth>1.00000</PCIe_Lane_Bandwidth>
+        <PCIe_Lane_Count>4</PCIe_Lane_Count>
+        <SATA_Processing_Delay>400000</SATA_Processing_Delay>
+        <Enable_ResponseTime_Logging>false</Enable_ResponseTime_Logging>
+        <ResponseTime_Logging_Period_Length>1000000</ResponseTime_Logging_Period_Length>
+    </Host_Parameter_Set>
+    <Device_Parameter_Set>
+        <Seed>321</Seed>
+        <Enabled_Preconditioning>false</Enabled_Preconditioning>
+        <Memory_Type>FLASH</Memory_Type>
+        <HostInterface_Type>NVME</HostInterface_Type>
+        <IO_Queue_Depth>65535</IO_Queue_Depth>
+        <Queue_Fetch_Size>512</Queue_Fetch_Size>
+        <Caching_Mechanism>ADVANCED</Caching_Mechanism>
+        <Data_Cache_Sharing_Mode>SHARED</Data_Cache_Sharing_Mode>
+        <Data_Cache_Capacity>2147483648</Data_Cache_Capacity>
+        <Data_Cache_DRAM_Row_Size>8192</Data_Cache_DRAM_Row_Size>
+        <Data_Cache_DRAM_Data_Rate>100</Data_Cache_DRAM_Data_Rate>
+        <Data_Cache_DRAM_Data_Busrt_Size>1</Data_Cache_DRAM_Data_Busrt_Size>
+        <Data_Cache_DRAM_tRCD>13</Data_Cache_DRAM_tRCD>
+        <Data_Cache_DRAM_tCL>13</Data_Cache_DRAM_tCL>
+        <Data_Cache_DRAM_tRP>13</Data_Cache_DRAM_tRP>
+        <Address_Mapping>PAGE_LEVEL</Address_Mapping>
+        <Ideal_Mapping_Table>false</Ideal_Mapping_Table>
+        <CMT_Capacity>16777216</CMT_Capacity>
+        <CMT_Sharing_Mode>SHARED</CMT_Sharing_Mode>
+        <Plane_Allocation_Scheme>CWDP</Plane_Allocation_Scheme>
+        <Transaction_Scheduling_Policy>PRIORITY_OUT_OF_ORDER</Transaction_Scheduling_Policy>
+        <Overprovisioning_Ratio>0.07</Overprovisioning_Ratio>
+        <GC_Exec_Threshold>0.05000</GC_Exec_Threshold>
+        <GC_Block_Selection_Policy>RGA</GC_Block_Selection_Policy>
+        <Use_Copyback_for_GC>false</Use_Copyback_for_GC>
+        <Preemptible_GC_Enabled>false</Preemptible_GC_Enabled>
+        <GC_Hard_Threshold>0.005000</GC_Hard_Threshold>
+        <Dynamic_Wearleveling_Enabled>true</Dynamic_Wearleveling_Enabled>
+        <Static_Wearleveling_Enabled>true</Static_Wearleveling_Enabled>
+        <Static_Wearleveling_Threshold>100</Static_Wearleveling_Threshold>
+        <Preferred_suspend_erase_time_for_read>700000</Preferred_suspend_erase_time_for_read>
+        <Preferred_suspend_erase_time_for_write>700000</Preferred_suspend_erase_time_for_write>
+        <Preferred_suspend_write_time_for_read>100000</Preferred_suspend_write_time_for_read>
+        <!-- NAND Flash: 16CH flagship controller -->
+        <Flash_Channel_Count>16</Flash_Channel_Count>
+        <Flash_Channel_Width>1</Flash_Channel_Width>
+        <Channel_Transfer_Rate>1600</Channel_Transfer_Rate>
+        <Chip_No_Per_Channel>4</Chip_No_Per_Channel>
+        <Flash_Comm_Protocol>NVDDR3</Flash_Comm_Protocol>
+        <Flash_Parameter_Set>
+            <Flash_Technology>TLC</Flash_Technology>
+            <CMD_Suspension_Support>ERASE</CMD_Suspension_Support>
+            <Page_Read_Latency_LSB>37000</Page_Read_Latency_LSB>
+            <Page_Read_Latency_CSB>45000</Page_Read_Latency_CSB>
+            <Page_Read_Latency_MSB>37000</Page_Read_Latency_MSB>
+            <Page_Program_Latency_LSB>390000</Page_Program_Latency_LSB>
+            <Page_Program_Latency_CSB>390000</Page_Program_Latency_CSB>
+            <Page_Program_Latency_MSB>390000</Page_Program_Latency_MSB>
+            <Block_Erase_Latency>3500000</Block_Erase_Latency>
+            <Block_PE_Cycles_Limit>3000</Block_PE_Cycles_Limit>
+            <Suspend_Erase_Time>700000</Suspend_Erase_Time>
+            <Suspend_Program_Time>100000</Suspend_Program_Time>
+            <!-- YMTC 232L geometry (same as 8CH variant) -->
+            <Die_No_Per_Chip>2</Die_No_Per_Chip>
+            <Plane_No_Per_Die>6</Plane_No_Per_Die>
+            <Block_No_Per_Plane>2304</Block_No_Per_Plane>
+            <Page_No_Per_Block>576</Page_No_Per_Block>
+            <Page_Capacity>16384</Page_Capacity>
+            <Page_Metadat_Capacity>1942</Page_Metadat_Capacity>
+        </Flash_Parameter_Set>
+    </Device_Parameter_Set>
+</Execution_Parameter_Set>

@@ -76,7 +76,8 @@ def main():
         merge_contiguous = mc.get("merge_contiguous", True)
         ms.trace_config = TraceSliceConfig(
             merge_contiguous=merge_contiguous,
-            request_size=request_size)
+            request_size=request_size,
+            cwdp_aware=mc.get("cwdp_aware", False))
 
     # ---- status banner ----
     print("=" * 60)
@@ -123,11 +124,6 @@ def main():
         print(f"Cycles:    {metrics.cycles}")
     print(f"Time:      {metrics.total_time * 1e9:.1f} ns")
     print(f"Bandwidth: {engine.get_engine_metrics().avg_bandwidth / 1e9:.2f} GB/s")
-
-    if backend == MediaSystemBackend.MQSIM and hasattr(ms, 'last_result'):
-        lr = ms.last_result
-        if lr is not None and lr.avg_latency_ns > 0:
-            print(f"Read Lat:  {lr.avg_latency_ns:.1f} ns")
 
     print("=" * 60)
 
