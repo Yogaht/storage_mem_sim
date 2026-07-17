@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Samsung PM1753 — PCIe Gen5 flagship enterprise SSD (2024)
+  Refs: Samsung PM1753 (16CH, V8 V-NAND TLC, max 32TB)
+        AnandTech FMS 2024 (14.8/11 GB/s, 3400K/600K IOPS)
+        Samsung PM9A3 (V6 V-NAND, 16KB page, 2-plane, tR=45us, tProg=390us)
+        V8 V-NAND inference: ~236L, faster, 4-plane/die
+  Key differences vs YMTC 232L:
+    Channels:  8/16 → 16
+    Plane/Die: 6 → 4 (Samsung: fewer larger planes)
+    Page/Blk:  576 → 768 (Samsung TLC V-NAND)
+    tR:        37-45us → 40us (V8 uniform)
+    CH BW:     1600 → 2000 (Toggle 5.0 class)
+  Capacity: 512 planes × 5376 blocks × 768 pages × 16KB ≈ 34.6 TB raw
+            ~32.4 TB usable (7% OP)
+
+  Peak specs (theory model — pymqsim.trace.theory_iops / theory_bandwidth_mbps):
+    Total CH BW:      32,000 MB/s  (32.0 GB/s, 16ch × 2000)
+    IOPS @  4KB:        839,000    (IOPS-bound,  bus util ~43.0%  → bottleneck: NAND tR)
+    IOPS @128KB:         58,600    (BW-bound,    bus util ~96.0%  → bottleneck: channel bus)
+    BW   @128KB:       7,681 MB/s  (7.7 GB/s)
+    Host interface:   PCIe Gen5 x4 ≅ 16 GB/s  → host is the real BW bottleneck
+    Real-world ref:   ~3,400K IOPS / ~14,800 MB/s (Samsung PM1753 official)
+-->
+<Execution_Parameter_Set>
+    <Host_Parameter_Set>
+        <PCIe_Lane_Bandwidth>1.00000</PCIe_Lane_Bandwidth>
+        <PCIe_Lane_Count>4</PCIe_Lane_Count>
+        <SATA_Processing_Delay>400000</SATA_Processing_Delay>
+        <Enable_ResponseTime_Logging>false</Enable_ResponseTime_Logging>
+        <ResponseTime_Logging_Period_Length>1000000</ResponseTime_Logging_Period_Length>
+    </Host_Parameter_Set>
+    <Device_Parameter_Set>
+        <Seed>321</Seed>
+        <Enabled_Preconditioning>false</Enabled_Preconditioning>
+        <Memory_Type>FLASH</Memory_Type>
+        <HostInterface_Type>NVME</HostInterface_Type>
+        <IO_Queue_Depth>65535</IO_Queue_Depth>
+        <Queue_Fetch_Size>512</Queue_Fetch_Size>
+        <Caching_Mechanism>ADVANCED</Caching_Mechanism>
+        <Data_Cache_Sharing_Mode>SHARED</Data_Cache_Sharing_Mode>
+        <Data_Cache_Capacity>4294967296</Data_Cache_Capacity>
+        <Data_Cache_DRAM_Row_Size>8192</Data_Cache_DRAM_Row_Size>
+        <Data_Cache_DRAM_Data_Rate>100</Data_Cache_DRAM_Data_Rate>
+        <Data_Cache_DRAM_Data_Busrt_Size>1</Data_Cache_DRAM_Data_Busrt_Size>
+        <Data_Cache_DRAM_tRCD>13</Data_Cache_DRAM_tRCD>
+        <Data_Cache_DRAM_tCL>13</Data_Cache_DRAM_tCL>
+        <Data_Cache_DRAM_tRP>13</Data_Cache_DRAM_tRP>
+        <Address_Mapping>PAGE_LEVEL</Address_Mapping>
+        <Ideal_Mapping_Table>false</Ideal_Mapping_Table>
+        <CMT_Capacity>33554432</CMT_Capacity>
+        <CMT_Sharing_Mode>SHARED</CMT_Sharing_Mode>
+        <Plane_Allocation_Scheme>CWDP</Plane_Allocation_Scheme>
+        <Transaction_Scheduling_Policy>PRIORITY_OUT_OF_ORDER</Transaction_Scheduling_Policy>
+        <Overprovisioning_Ratio>0.07</Overprovisioning_Ratio>
+        <GC_Exec_Threshold>0.05000</GC_Exec_Threshold>
+        <GC_Block_Selection_Policy>RGA</GC_Block_Selection_Policy>
+        <Use_Copyback_for_GC>false</Use_Copyback_for_GC>
+        <Preemptible_GC_Enabled>false</Preemptible_GC_Enabled>
+        <GC_Hard_Threshold>0.005000</GC_Hard_Threshold>
+        <Dynamic_Wearleveling_Enabled>true</Dynamic_Wearleveling_Enabled>
+        <Static_Wearleveling_Enabled>true</Static_Wearleveling_Enabled>
+        <Static_Wearleveling_Threshold>100</Static_Wearleveling_Threshold>
+        <Preferred_suspend_erase_time_for_read>700000</Preferred_suspend_erase_time_for_read>
+        <Preferred_suspend_erase_time_for_write>700000</Preferred_suspend_erase_time_for_write>
+        <Preferred_suspend_write_time_for_read>100000</Preferred_suspend_write_time_for_read>
+        <!-- NAND Flash: 16CH flagship (Samsung V8 V-NAND) -->
+        <Flash_Channel_Count>16</Flash_Channel_Count>
+        <Flash_Channel_Width>1</Flash_Channel_Width>
+        <Channel_Transfer_Rate>2000</Channel_Transfer_Rate>
+        <Chip_No_Per_Channel>4</Chip_No_Per_Channel>
+        <Flash_Comm_Protocol>NVDDR3</Flash_Comm_Protocol>
+        <Flash_Parameter_Set>
+            <Flash_Technology>TLC</Flash_Technology>
+            <CMD_Suspension_Support>ERASE</CMD_Suspension_Support>
+            <!-- Samsung V8 V-NAND: uniform 40us read -->
+            <Page_Read_Latency_LSB>40000</Page_Read_Latency_LSB>
+            <Page_Read_Latency_CSB>40000</Page_Read_Latency_CSB>
+            <Page_Read_Latency_MSB>40000</Page_Read_Latency_MSB>
+            <!-- Samsung V8 TLC program: ~350us (faster than V6 390us) -->
+            <Page_Program_Latency_LSB>350000</Page_Program_Latency_LSB>
+            <Page_Program_Latency_CSB>350000</Page_Program_Latency_CSB>
+            <Page_Program_Latency_MSB>350000</Page_Program_Latency_MSB>
+            <Block_Erase_Latency>3500000</Block_Erase_Latency>
+            <!-- Samsung V8 TLC: 5000 PE cycles -->
+            <Block_PE_Cycles_Limit>5000</Block_PE_Cycles_Limit>
+            <Suspend_Erase_Time>700000</Suspend_Erase_Time>
+            <Suspend_Program_Time>100000</Suspend_Program_Time>
+            <!-- Samsung V8 V-NAND geometry -->
+            <Die_No_Per_Chip>2</Die_No_Per_Chip>
+            <Plane_No_Per_Die>4</Plane_No_Per_Die>
+            <Block_No_Per_Plane>5376</Block_No_Per_Plane>
+            <Page_No_Per_Block>768</Page_No_Per_Block>
+            <Page_Capacity>16384</Page_Capacity>
+            <Page_Metadat_Capacity>2208</Page_Metadat_Capacity>
+        </Flash_Parameter_Set>
+    </Device_Parameter_Set>
+</Execution_Parameter_Set>

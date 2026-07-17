@@ -366,20 +366,41 @@ class TestMQSimWorkload(unittest.TestCase):
 
 
 # ------------------------------------------------------------------
-# Constants XML loading tests
+# Constants XML loading tests (default + Ascend A3 + PM1753)
 # ------------------------------------------------------------------
 
 class TestConstantsXMLLoading(unittest.TestCase):
-    """Test NAND geometry loading from MQSim ssdconfig.xml / workload.xml."""
+    """Test NAND geometry loading from MQSim ssdconfig.xml / workload.xml.
+
+    Covers three generations of enterprise SSD configs:
+      - default (MLC, 8KB page, 2-plane, NVDDR2) — 保守参考配置
+      - Ascend A3  (TLC, 16KB page, 6-plane, NVDDR3) — YMTC 232L 国产
+      - PM1753     (TLC, 16KB page, 4-plane, NVDDR3) — Samsung V8 旗舰
+    """
 
     @classmethod
     def setUpClass(cls):
+        cfg_dir = os.path.join(os.path.dirname(__file__), "config")
+        # Default configs (in tests/config/)
         cls._default_ssdconfig = os.path.join(
-            os.path.dirname(__file__), "..", "media", "mqsim_wrapper",
-            "default_ssdconfig.xml")
+            cfg_dir, "default_ssdconfig.xml")
         cls._default_workload = os.path.join(
-            os.path.dirname(__file__), "..", "media", "mqsim_wrapper",
-            "default_workload.xml")
+            cfg_dir, "default_workload.xml")
+        # Ascend A3 8CH (YMTC 232L)
+        cls._ascend_a3_ssdconfig = os.path.join(
+            cfg_dir, "ascend_a3_ssdconfig.xml")
+        cls._ascend_a3_workload = os.path.join(
+            cfg_dir, "ascend_a3_workload.xml")
+        # Ascend A3 16CH (YMTC 232L flagship)
+        cls._ascend_a3_16ch_ssdconfig = os.path.join(
+            cfg_dir, "ascend_a3_16ch_ssdconfig.xml")
+        cls._ascend_a3_16ch_workload = os.path.join(
+            cfg_dir, "ascend_a3_16ch_workload.xml")
+        # PM1753 16CH (Samsung V8 V-NAND)
+        cls._pm1753_ssdconfig = os.path.join(
+            cfg_dir, "pm1753_ssdconfig.xml")
+        cls._pm1753_workload = os.path.join(
+            cfg_dir, "pm1753_workload.xml")
 
     def setUp(self):
         """Reset _loaded flag so each test starts fresh."""
@@ -387,7 +408,9 @@ class TestConstantsXMLLoading(unittest.TestCase):
         self.trace = C
         C._loaded = False
 
-    def test_load_from_ssdconfig_xml(self):
+    # ---- default_ssdconfig.xml ----
+
+    def test_load_default_geometry(self):
         """Geometry is correctly parsed from default_ssdconfig.xml."""
         C = self.trace
         loaded = C.load_from_ssdconfig_xml(self._default_ssdconfig)
@@ -403,14 +426,148 @@ class TestConstantsXMLLoading(unittest.TestCase):
         self.assertEqual(C.NAND_tR_NS, 75000)
         self.assertTrue(C._loaded)
 
-    def test_load_from_ssdconfig_derived_values(self):
-        """Derived values are recomputed after loading."""
+    def test_load_default_derived_values(self):
+        """Derived values are recomputed after loading default config."""
         C = self.trace
         C.load_from_ssdconfig_xml(self._default_ssdconfig)
 
         self.assertEqual(C.SECTORS_PER_PAGE, 8192 // 512)  # 16
         self.assertEqual(C.TOTAL_PLANES, 8 * 4 * 2 * 2)    # 128
         self.assertEqual(C.TOTAL_CHANNEL_BW_MBPS, 8 * 333) # 2664
+
+    def test_load_default_workload(self):
+        """Resource IDs are correctly parsed from default_workload.xml."""
+        C = self.trace
+        res = C.load_from_workload_xml(self._default_workload)
+
+        self.assertEqual(res['channel_ids'], [0, 1, 2, 3, 4, 5, 6, 7])
+        self.assertEqual(res['chip_ids'], [0, 1, 2, 3])
+        self.assertEqual(res['die_ids'], [0, 1])
+        self.assertEqual(res['plane_ids'], [0, 1])
+
+    # ---- ascend_a3_ssdconfig.xml (YMTC 232L 8CH) ----
+
+    def test_load_ascend_a3_geometry(self):
+        """Ascend A3: YMTC 232L TLC, 8CH, 6-plane, 16KB page, NVDDR3."""
+        C = self.trace
+        loaded = C.load_from_ssdconfig_xml(self._ascend_a3_ssdconfig)
+
+        self.assertEqual(C.CHANNELS, 8)
+        self.assertEqual(C.CHIPS_PER_CH, 4)
+        self.assertEqual(C.DIES_PER_CHIP, 2)
+        self.assertEqual(C.PLANES_PER_DIE, 6,
+                         "YMTC 232L has 6 planes (2×3 Center X-DEC)")
+        self.assertEqual(C.PAGE_SIZE_BYTES, 16384,
+                         "Modern enterprise standard: 16 KB page")
+        self.assertEqual(C.PAGES_PER_BLOCK, 576,
+                         "TLC block: 192×3 pages")
+        self.assertEqual(C.CHANNEL_BW_MBPS, 1600,
+                         "NVDDR3 at 1600 MB/s/ch")
+        self.assertEqual(C.NAND_tR_NS, 37000,
+                         "YMTC 232L LSB read: 37 µs")
+        self.assertEqual(C.CMD_TRANSFER_NS, 200,
+                         "NVDDR3 CMD transfer: 200 ns")
+        self.assertEqual(C.DATA_SETUP_NS, 20,
+                         "NVDDR3 data setup: 20 ns")
+        self.assertIn('CMD_TRANSFER_NS', loaded)
+        self.assertIn('DATA_SETUP_NS', loaded)
+        self.assertTrue(C._loaded)
+
+    def test_load_ascend_a3_derived_values(self):
+        """Ascend A3 derived: SECTORS_PER_PAGE=32, TOTAL_PLANES=384."""
+        C = self.trace
+        C.load_from_ssdconfig_xml(self._ascend_a3_ssdconfig)
+
+        self.assertEqual(C.SECTORS_PER_PAGE, 16384 // 512)   # 32
+        self.assertEqual(C.TOTAL_PLANES, 8 * 4 * 2 * 6)       # 384
+        self.assertEqual(C.TOTAL_CHANNEL_BW_MBPS, 8 * 1600)   # 12800
+
+    def test_load_ascend_a3_workload(self):
+        """Ascend A3 workload: 8 channels, 4 chips, 2 dies, 6 planes."""
+        C = self.trace
+        res = C.load_from_workload_xml(self._ascend_a3_workload)
+
+        self.assertEqual(res['channel_ids'], [0, 1, 2, 3, 4, 5, 6, 7])
+        self.assertEqual(res['chip_ids'], [0, 1, 2, 3])
+        self.assertEqual(res['die_ids'], [0, 1])
+        self.assertEqual(res['plane_ids'], [0, 1, 2, 3, 4, 5],
+                         "YMTC 232L: 6-plane layout")
+
+    # ---- ascend_a3_16ch_ssdconfig.xml (YMTC 232L 16CH flagship) ----
+
+    def test_load_ascend_a3_16ch_geometry(self):
+        """Ascend A3 16CH: YMTC 232L TLC, 16CH, 6-plane, ~15.6TB."""
+        C = self.trace
+        C.load_from_ssdconfig_xml(self._ascend_a3_16ch_ssdconfig)
+
+        self.assertEqual(C.CHANNELS, 16,
+                         "Flagship controller: 16 channels")
+        self.assertEqual(C.PLANES_PER_DIE, 6)
+        self.assertEqual(C.PAGE_SIZE_BYTES, 16384)
+        self.assertEqual(C.CHANNEL_BW_MBPS, 1600)
+
+    def test_load_ascend_a3_16ch_derived_values(self):
+        """Ascend A3 16CH derived: TOTAL_PLANES=768."""
+        C = self.trace
+        C.load_from_ssdconfig_xml(self._ascend_a3_16ch_ssdconfig)
+
+        self.assertEqual(C.TOTAL_PLANES, 16 * 4 * 2 * 6)       # 768
+        self.assertEqual(C.TOTAL_CHANNEL_BW_MBPS, 16 * 1600)   # 25600
+
+    def test_load_ascend_a3_16ch_workload(self):
+        """Ascend A3 16CH workload: 16 channels, 6 planes."""
+        C = self.trace
+        res = C.load_from_workload_xml(self._ascend_a3_16ch_workload)
+
+        self.assertEqual(res['channel_ids'],
+                         [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15])
+        self.assertEqual(res['plane_ids'], [0, 1, 2, 3, 4, 5])
+
+    # ---- pm1753_ssdconfig.xml (Samsung V8 V-NAND 16CH) ----
+
+    def test_load_pm1753_geometry(self):
+        """PM1753: Samsung V8 V-NAND TLC, 16CH, 4-plane, 16KB page."""
+        C = self.trace
+        loaded = C.load_from_ssdconfig_xml(self._pm1753_ssdconfig)
+
+        self.assertEqual(C.CHANNELS, 16,
+                         "PM1753 flagship: 16 channels")
+        self.assertEqual(C.CHIPS_PER_CH, 4)
+        self.assertEqual(C.DIES_PER_CHIP, 2)
+        self.assertEqual(C.PLANES_PER_DIE, 4,
+                         "Samsung V8 V-NAND: 4 planes/die")
+        self.assertEqual(C.PAGE_SIZE_BYTES, 16384)
+        self.assertEqual(C.PAGES_PER_BLOCK, 768,
+                         "Samsung TLC V-NAND: 768 pages/block")
+        self.assertEqual(C.CHANNEL_BW_MBPS, 2000,
+                         "Toggle 5.0 class: 2000 MB/s/ch")
+        self.assertEqual(C.NAND_tR_NS, 40000,
+                         "V8 V-NAND: 40 µs")
+        self.assertIn('CHANNEL_BW_MBPS', loaded)
+        self.assertTrue(C._loaded)
+
+    def test_load_pm1753_derived_values(self):
+        """PM1753 derived: TOTAL_PLANES=512."""
+        C = self.trace
+        C.load_from_ssdconfig_xml(self._pm1753_ssdconfig)
+
+        self.assertEqual(C.SECTORS_PER_PAGE, 16384 // 512)    # 32
+        self.assertEqual(C.TOTAL_PLANES, 16 * 4 * 2 * 4)       # 512
+        self.assertEqual(C.TOTAL_CHANNEL_BW_MBPS, 16 * 2000)   # 32000
+
+    def test_load_pm1753_workload(self):
+        """PM1753 workload: 16 channels, 4 chips, 2 dies, 4 planes."""
+        C = self.trace
+        res = C.load_from_workload_xml(self._pm1753_workload)
+
+        self.assertEqual(res['channel_ids'],
+                         [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15])
+        self.assertEqual(res['chip_ids'], [0, 1, 2, 3])
+        self.assertEqual(res['die_ids'], [0, 1])
+        self.assertEqual(res['plane_ids'], [0, 1, 2, 3],
+                         "Samsung V8 V-NAND: 4-plane layout")
+
+    # ---- common (protocol-independent) ----
 
     def test_unloaded_raises(self):
         """Functions raise RuntimeError if geometry not loaded."""
@@ -437,19 +594,25 @@ class TestConstantsXMLLoading(unittest.TestCase):
         self.assertEqual(C.size_to_sectors(512), 1)
         self.assertEqual(C.size_to_sectors(513), 2)
 
-    def test_load_from_workload_xml(self):
-        """Resource IDs are correctly parsed from default_workload.xml."""
+    def test_theory_functions_after_load(self):
+        """theory_iops / theory_bw work after loading any config."""
         C = self.trace
-        res = C.load_from_workload_xml(self._default_workload)
+        C.load_from_ssdconfig_xml(self._ascend_a3_ssdconfig)
 
-        self.assertIn('channel_ids', res)
-        self.assertIn('chip_ids', res)
-        self.assertIn('die_ids', res)
-        self.assertIn('plane_ids', res)
-        self.assertEqual(res['channel_ids'], [0, 1, 2, 3, 4, 5, 6, 7])
-        self.assertEqual(res['chip_ids'], [0, 1, 2, 3])
-        self.assertEqual(res['die_ids'], [0, 1])
-        self.assertEqual(res['plane_ids'], [0, 1])
+        iops_4k = C.theory_iops(4096)
+        bw_128k = C.theory_bandwidth_mbps(131072)
+        util_4k = C.theory_bus_utilization(4096)
+        util_128k = C.theory_bus_utilization(131072)
+
+        self.assertGreater(iops_4k, 0, "IOPS should be positive")
+        self.assertGreater(bw_128k, 0, "Bandwidth should be positive")
+        self.assertGreater(util_128k, util_4k,
+                           "Large requests → higher bus utilization")
+        # 4KB → IOPS-bound (U<0.5), 128KB → BW-bound
+        self.assertLess(util_4k, 0.50,
+                        f"4KB should be IOPS-bound, got U={util_4k:.3f}")
+        self.assertGreater(util_128k, 0.50,
+                           f"128KB should be BW-bound, got U={util_128k:.3f}")
 
 
 # ------------------------------------------------------------------
@@ -621,9 +784,9 @@ class TestTraceLineCount(unittest.TestCase):
         self.assertGreater(expected_iops, 0)
 
 
-# ------------------------------------------------------------------
-# Full-pipeline IOPS validation (requires MQSim engine)
-# ------------------------------------------------------------------
+# # ------------------------------------------------------------------
+# # Full-pipeline IOPS validation (requires MQSim engine)
+# # ------------------------------------------------------------------
 
 _mqsim_available = False
 try:
@@ -658,7 +821,7 @@ class TestFullPipelineIOPS(unittest.TestCase):
         self.assertGreater(metrics.iops, 0)
         # bandwidth * time ≈ total_bytes
         total_bytes = n * 131072
-        computed_bytes = metrics.bandwidth * metrics.time
+        computed_bytes = metrics.bandwidth * metrics.time *(1024**3)
         self.assertAlmostEqual(computed_bytes / total_bytes, 1.0, delta=0.3)
 
     def test_random_iops_metrics_consistency(self):
@@ -807,7 +970,8 @@ class TestNativeVsBinary(unittest.TestCase):
         self.assertAlmostEqual(ratio, 1.0, delta=0.05,
             msg=f"Native IOPS={native_result.total_iops:.0f}, "
                 f"Binary IOPS={binary_result.total_iops:.0f}")
-
+        print(f'native_result.total_iops:{native_result.total_iops},binary_result.total_iops:{binary_result.total_iops}')
+        # print(f'native_result.bandwidth:{native_result.bandwidth},binary_result.bandwidth:{binary_result.bandwidth}')
 
 if __name__ == "__main__":
     unittest.main()

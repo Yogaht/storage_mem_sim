@@ -192,11 +192,6 @@ def main(argv=None):
     print(f"Time:      {metrics.total_time * 1e9:.1f} ns")
     print(f"Bandwidth: {engine.get_engine_metrics().avg_bandwidth / 1e9:.2f} GB/s")
 
-    if backend == MediaSystemBackend.MQSIM and hasattr(ms, 'last_result'):
-        lr = ms.last_result
-        if lr is not None and lr.avg_latency_ns > 0:
-            print(f"Read Lat:  {lr.avg_latency_ns:.1f} ns")
-
     print("=" * 60)
 
 

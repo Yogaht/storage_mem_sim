@@ -336,11 +336,12 @@ def build_trace_lines(
 ) -> Tuple[List[int], List[int], List[int]]:
     """MemoryRequests → (addr, size, type) trace-line triples.
 
-    Pipeline: merge → slice by request_size → page-align.
+    Pipeline: merge → slice by request_size → sector-align.
 
     Trace lines faithfully record the addresses from MemoryRequests —
     no CWDP stride correction or address redistribution is applied.
-    Addresses are written in their natural order.
+    Addresses are sector-aligned (512 B) to preserve the page-offset
+    that MQSim uses for sub-page sector bitmap computation.
     """
     if not mem_req_list:
         return [], [], []
@@ -367,7 +368,10 @@ def build_trace_lines(
             offset = 0
             while offset < total_size:
                 chunk = min(total_size - offset, line_size)
-                aligned = align_lba((base_addr + offset) // SECTOR_SIZE) * SECTOR_SIZE
+                # Align to sector boundary only (512 B) — preserve page-offset
+                # so that MQSim's Find_NVM_subunit_access_bitmap() correctly
+                # computes the sub-page sector bitmap.
+                aligned = ((base_addr + offset) // SECTOR_SIZE) * SECTOR_SIZE
                 addr_list.append(aligned)
                 size_list.append(chunk)
                 type_list.append(rtype)
@@ -375,8 +379,9 @@ def build_trace_lines(
         else:
             # ── cwdp_aware: CWDP stride correction ──
             start_page = base_addr // PAGE_SIZE_BYTES
+            page_offset = base_addr % PAGE_SIZE_BYTES
             if line_size < PAGE_SIZE_BYTES:
-                # sub-page: multi-round traversal
+                # sub-page: multi-round traversal, preserve page offset
                 lines_per_page = PAGE_SIZE_BYTES // line_size
                 num_pages = math.ceil(n_lines / lines_per_page)
                 emitted = 0
@@ -384,7 +389,11 @@ def build_trace_lines(
                     for pg in range(num_pages):
                         if emitted >= n_lines:
                             break
-                        addr = ((start_page + pg) * PAGE_SIZE_BYTES + off_idx * line_size)
+                        off_in_page = page_offset + off_idx * line_size
+                        extra_page = off_in_page // PAGE_SIZE_BYTES
+                        off_in_page = off_in_page % PAGE_SIZE_BYTES
+                        addr = ((start_page + pg + extra_page) * PAGE_SIZE_BYTES
+                                + off_in_page)
                         actual = min(line_size, total_size - emitted * line_size)
                         addr_list.append(addr)
                         size_list.append(actual)
@@ -393,11 +402,12 @@ def build_trace_lines(
                     if emitted >= n_lines:
                         break
             else:
-                # super-page: co-prime stride
+                # super-page: co-prime stride, preserve page offset
                 pages_per_line = line_size // PAGE_SIZE_BYTES
                 stride_pages = _cwdp_stride(pages_per_line)
                 for i in range(n_lines):
-                    addr = (start_page + i * stride_pages) * PAGE_SIZE_BYTES
+                    addr = ((start_page + i * stride_pages) * PAGE_SIZE_BYTES
+                            + page_offset)
                     actual = min(line_size, total_size - i * line_size)
                     addr_list.append(addr)
                     size_list.append(actual)

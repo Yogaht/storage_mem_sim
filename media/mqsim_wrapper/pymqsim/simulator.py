@@ -93,8 +93,8 @@ def run_simulation(
             "dev_resp=%s ns e2e=%s ns",
             stats.get("generated_request_count", "?"),
             stats.get("serviced_request_count", "?"),
-            stats.get("device_response_time_ns", "?"),
-            stats.get("end_to_end_request_delay_ns", "?"),
+            stats.get("device_response_time_us", "?"),
+            stats.get("end_to_end_request_delay_us", "?"),
         )
         ok = stats is not None
     else:
