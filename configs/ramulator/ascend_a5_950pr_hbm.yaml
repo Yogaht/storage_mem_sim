@@ -1,0 +1,29 @@
+# Ascend A5-class / 950PR-like HBM approximation.
+# Public roadmap reports point to a 128 GB, ~1.6 TB/s tier. Current Ramulator
+# presets do not model Huawei in-house HBM directly, so this uses an HBM3-like
+# channel model:
+#   capacity:  32 channels * 4 GB/channel = 128 GB
+#   bandwidth: 32 channels * 2 pseudochannels/channel * 32 bit / 8
+#              * 6400e6 = 1638.4 GB/s peak.
+MemorySystem:
+  impl: GenericDRAM
+  clock_ratio: 1
+  ChannelMapper:
+    impl: CacheLineInterleave
+  DRAM:
+    impl: HBM3
+    org:
+      preset: HBM3_32Gb_16hi
+    timing:
+      preset: HBM3_6400Mbps
+  Controllers:
+    - impl: HBM34
+      count: 32
+      Scheduler:
+        impl: FRFCFS
+      RowPolicy:
+        impl: Open
+      AddrMapper:
+        impl: RoBaRaCoCh
+      RefreshManager:
+        impl: NoRefresh

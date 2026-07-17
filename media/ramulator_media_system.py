@@ -217,11 +217,9 @@ class RamulatorMediaSystem(BaseMediaSystem):
 
             # --- Controllers ---
             controllers = []
-            ctrl_list = ms.get("Controllers") or ms.get("Controller")
-            if isinstance(ctrl_list, dict):
-                ctrl_list = [ctrl_list]
-            elif not ctrl_list:
-                ctrl_list = [{}]
+            ctrl_list = _expand_controller_configs(
+                ms.get("Controllers") or ms.get("Controller")
+            )
             for c_cfg in ctrl_list:
                 ctrl_cls = getattr(ramulator.controller, c_cfg.get("impl", "GenericDDR"))
 
@@ -282,6 +280,29 @@ def _create_component(module, cfg: dict, default_impl: str):
     """
     cls = getattr(module, cfg.get("impl", default_impl))
     return cls()
+
+
+def _expand_controller_configs(ctrl_cfg):
+    """Normalize controller config and expand optional ``count`` shorthand.
+
+    A controller entry with ``count: N`` is equivalent to repeating the same
+    controller config N times in the YAML.
+    """
+    if isinstance(ctrl_cfg, dict):
+        ctrl_list = [ctrl_cfg]
+    elif ctrl_cfg:
+        ctrl_list = ctrl_cfg
+    else:
+        ctrl_list = [{}]
+
+    expanded = []
+    for cfg in ctrl_list:
+        count = int(cfg.get("count", 1))
+        if count < 1:
+            raise ValueError(f"Controller count must be >= 1, got {count}")
+        base = {k: v for k, v in cfg.items() if k != "count"}
+        expanded.extend(base.copy() for _ in range(count))
+    return expanded
 
 
 def _find_dram(cfg: dict) -> dict:

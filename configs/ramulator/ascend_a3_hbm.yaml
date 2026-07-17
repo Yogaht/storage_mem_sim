@@ -1,0 +1,28 @@
+# Ascend A3-class HBM approximation.
+# Reuses the A2-class 64 GB / 1.6 TB/s HBM model until more precise public
+# specs are available:
+#   capacity:  32 channels * 2 GB/channel = 64 GB
+#   bandwidth: 32 channels * 2 pseudochannels/channel * 64 bit / 8
+#              * 3200e6 = 1638.4 GB/s peak.
+MemorySystem:
+  impl: GenericDRAM
+  clock_ratio: 1
+  ChannelMapper:
+    impl: CacheLineInterleave
+  DRAM:
+    impl: HBM2
+    org:
+      preset: HBM2_8Gb
+    timing:
+      preset: HBM2_3200Mbps
+  Controllers:
+    - impl: HBM12
+      count: 32
+      Scheduler:
+        impl: FRFCFS
+      RowPolicy:
+        impl: Open
+      AddrMapper:
+        impl: RoBaRaCoCh
+      RefreshManager:
+        impl: NoRefresh

@@ -1,0 +1,33 @@
+# Ascend A5-class / 950DT-like HBM approximation.
+# 96 GB / 4 TB/s HBM3e-like tier, modeled as 4 HBM stacks:
+#   stack organization: 4 stacks * 16 channels/stack = 64 channels
+#   bandwidth: 64 channels * 2 pseudochannels/channel * 32 bit / 8
+#              * 8000Mbps = 4096.0 GB/s peak.
+#
+# Note: MemEngine JSON declares the user-visible capacity as 96 GB. The
+# Ramulator HBM3_32Gb_8hi org is the closest built-in topology for HBM3e-like
+# bandwidth modeling, but corresponds to 128 GB at 64 channels.
+MemorySystem:
+  impl: GenericDRAM
+  clock_ratio: 1
+  ChannelMapper:
+    impl: CacheLineInterleave
+  DRAM:
+    impl: HBM3
+    org:
+      preset: HBM3_32Gb_8hi
+    timing:
+      preset: HBM3_6400Mbps
+      rate: 8000
+      tCK_ps: 250
+  Controllers:
+    - impl: HBM34
+      count: 64
+      Scheduler:
+        impl: FRFCFS
+      RowPolicy:
+        impl: Open
+      AddrMapper:
+        impl: RoBaRaCoCh
+      RefreshManager:
+        impl: NoRefresh
