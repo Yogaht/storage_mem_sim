@@ -4,6 +4,7 @@ Computes access time as total_data_size / bandwidth. No cycle-level
 simulation. Suitable for rapid prototyping and early-stage analysis.
 """
 
+import logging
 from typing import List, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -13,6 +14,8 @@ from .base_media import BaseMediaSystem
 from .media_config import MediaConfig
 from .media_metrics import MediaMetrics
 from ..memory_type import MemoryRequestType
+
+logger = logging.getLogger(__name__)
 
 
 class AnalyticMediaSystem(BaseMediaSystem):
@@ -39,6 +42,7 @@ class AnalyticMediaSystem(BaseMediaSystem):
             )
         # Convert bandwidth from GB/s to B/s
         self._bandwidth_bytes_per_sec = config.bandwidth * (1024 ** 3)
+        logger.info("Analytic backend ready: bandwidth=%.1f GB/s", config.bandwidth)
 
     def handler_mem_request(
         self, mem_req_list: List["MemoryRequest"]
@@ -76,4 +80,9 @@ class AnalyticMediaSystem(BaseMediaSystem):
         )
 
         self.system_metrics.update_from_media(metrics)
+        logger.debug(
+            "Analytic handler: time=%.4fus reads=%d writes=%d "
+            "total_bytes=%d",
+            total_time * 1e6, num_read, num_write,
+            sum(req.memory_object.size for req in mem_req_list))
         return metrics

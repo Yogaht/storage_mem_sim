@@ -4,11 +4,14 @@ Provides factory-pattern creation of media simulation backends based on
 the configured MediaSystemBackend type.
 """
 
+import logging
 from typing import Dict, Type
 
 from .media_backend import MediaSystemBackend
 from .media_config import MediaConfig
 from .base_media import BaseMediaSystem
+
+logger = logging.getLogger(__name__)
 
 
 class MediaSystemFactory:
@@ -54,7 +57,10 @@ class MediaSystemFactory:
                 f"Available backends: {list(cls._backends.keys())}"
             )
         simulator_class = cls._backends[backend]
-        return simulator_class(config)
+        instance = simulator_class(config)
+        logger.info("MediaSystem created: backend=%s class=%s",
+                    backend.value, simulator_class.__name__)
+        return instance
 
     @classmethod
     def _auto_register(cls):

@@ -7,6 +7,7 @@ performance simulation to the configured MediaSystem backend.
 """
 
 import math
+import logging
 from typing import List
 
 from .memory_type import MemoryRequestType
@@ -14,6 +15,8 @@ from .memory_config import MemoryEngineConfig
 from .memory_object import MemoryObject
 from .memory_request import MemoryRequest
 from .memory_metrics import MemoryMetrics, MemoryEngineMetrics
+
+logger = logging.getLogger(__name__)
 
 
 class MemoryEngine:
@@ -60,6 +63,14 @@ class MemoryEngine:
         tx = getattr(self.media_system, '_tx_bytes', None)
         self.mem_config.granularity = tx if tx else 64
 
+        logger.info(
+            "MemoryEngine init: mem_type=%s granularity=%d dp=%d instances=%d "
+            "capacity=%dGB per_dp=%dGB",
+            mem_config.memory_type.value, self.mem_config.granularity,
+            mem_config.dp_size, mem_config.storage_instance_num,
+            mem_config.total_capacity // (1024 ** 3),
+            mem_config.per_dp_capacity // (1024 ** 3))
+
     def align_up(self, size: int) -> int:
         """Align size up to the configured granularity.
 
@@ -92,6 +103,11 @@ class MemoryEngine:
         self.global_addr += aligned_size
 
         if self.mem_config.per_dp_capacity > 0 and self.global_addr > self.mem_config.per_dp_capacity:
+            logger.warning(
+                "Address overflow: size=%d aligned=%d global_addr=%d "
+                "per_dp_capacity=%d",
+                size, aligned_size, self.global_addr,
+                self.mem_config.per_dp_capacity)
             raise OverflowError(
                 f"Address overflow: global_addr {self.global_addr} exceeds "
                 f"per_dp_capacity {self.mem_config.per_dp_capacity}"
@@ -141,6 +157,17 @@ class MemoryEngine:
                 f"(got {n}, {len(size)}, {len(req_type)})"
             )
 
+        dp_size = self.mem_config.dp_size
+        instance_num = self.mem_config.storage_instance_num
+        total_bytes = sum(size)
+
+        logger.debug(
+            "issue_request: n=%d dp=%d instances=%d addr_range=[0x%x, 0x%x] "
+            "total_bytes=%d",
+            n, dp_size, instance_num,
+            min(addr) if addr else 0, max(addr) if addr else 0,
+            total_bytes)
+
         for i in range(n):
             if addr[i] < 0:
                 raise ValueError(f"addr[{i}] must be >= 0, got {addr[i]}")
@@ -148,9 +175,6 @@ class MemoryEngine:
                 raise ValueError(f"size[{i}] must be >= 0, got {size[i]}")
             if size[i] == 0:
                 raise ValueError(f"size[{i}] must be > 0")
-
-        dp_size = self.mem_config.dp_size
-        instance_num = self.mem_config.storage_instance_num
 
         # Build request list with DP/instance transformation
         mem_reqs: List[MemoryRequest] = []
@@ -213,6 +237,13 @@ class MemoryEngine:
         )
 
         self.engine_metrics.update(mem_metrics, simulated_bytes)
+
+        logger.debug(
+            "issue_request done: cycles=%d time=%.2fns sim_reqs=%d "
+            "global_reqs=%d bw=%.1fMB/s",
+            mem_metrics.cycles, mem_metrics.total_time * 1e9,
+            mem_metrics.memory_reqs_num, mem_metrics.global_memory_reqs_num,
+            self.engine_metrics.avg_bandwidth / 1e6 if self.engine_metrics.avg_bandwidth else 0)
 
         return mem_metrics
 
