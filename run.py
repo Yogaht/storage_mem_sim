@@ -58,6 +58,8 @@ def main():
         ssd_config_path=os.path.abspath(mc["ssd_config"]) if mc.get("ssd_config") else "",
         workload_config_path=os.path.abspath(mc["workload_config"]) if mc.get("workload_config") else "",
         request_size_bytes=request_size,
+        merge_contiguous=mc.get("merge_contiguous", True),
+        cwdp_aware=mc.get("cwdp_aware", False),
     )
 
     engine = MemoryEngine(MemoryEngineConfig(
@@ -70,14 +72,9 @@ def main():
     ms = engine.media_system
     tx_bytes = getattr(ms, '_tx_bytes', request_size)
 
-    # ---- MQSim trace config ----
+    # ---- MQSim trace config: override request_size per scenario ----
     if backend == MediaSystemBackend.MQSIM:
-        from .media.mqsim_wrapper.pymqsim import TraceSliceConfig
-        merge_contiguous = mc.get("merge_contiguous", True)
-        ms.trace_config = TraceSliceConfig(
-            merge_contiguous=merge_contiguous,
-            request_size=request_size,
-            cwdp_aware=mc.get("cwdp_aware", False))
+        ms.trace_config.request_size = request_size
 
     # ---- status banner ----
     print("=" * 60)
