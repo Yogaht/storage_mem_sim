@@ -1,9 +1,13 @@
 # Ascend A3-class HBM approximation.
 # Reuses the A2-class 64 GB / 1.6 TB/s HBM model until more precise public
 # specs are available:
-#   capacity:  32 channels * 2 GB/channel = 64 GB
-#   bandwidth: 32 channels * 2 pseudochannels/channel * 64 bit / 8
-#              * 3200e6 = 1638.4 GB/s peak.
+#   capacity:  64 effective channels * 1 GB/channel = 64 GB
+#   bandwidth: 64 effective channels * 64 bit / 8 * 3200e6
+#              = 1638.4 GB/s peak.
+#
+# Ramulator2 HBM12 keeps PseudoChannel as an internal DRAM hierarchy level
+# rather than an independent external controller. Use pseudochannel=1 and
+# count=64 to model the public 64 GB / ~1.6 TB/s HBM2e-like tier.
 MemorySystem:
   impl: GenericDRAM
   clock_ratio: 1
@@ -13,11 +17,14 @@ MemorySystem:
     impl: HBM2
     org:
       preset: HBM2_8Gb
+      pseudochannel: 1
     timing:
-      preset: HBM2_3200Mbps
+      preset: HBM2_2400Mbps
+      rate: 3200
+      tCK_ps: 625
   Controllers:
     - impl: HBM12
-      count: 32
+      count: 64
       Scheduler:
         impl: FRFCFS
       RowPolicy:
