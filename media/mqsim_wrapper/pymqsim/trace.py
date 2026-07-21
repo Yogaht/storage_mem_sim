@@ -61,6 +61,7 @@ SECTOR_SIZE: int = 512
 
 # Derived — computed after geometry is loaded
 SECTORS_PER_PAGE:      int = None
+TOTAL_DIES:            int = None
 TOTAL_PLANES:          int = None
 TOTAL_CHANNEL_BW_MBPS: int = None
 
@@ -84,11 +85,12 @@ def _require_loaded():
 
 def _recompute_derived():
     """Recompute derived constants after geometry has been set."""
-    global SECTORS_PER_PAGE, TOTAL_PLANES, TOTAL_CHANNEL_BW_MBPS, _loaded
+    global SECTORS_PER_PAGE, TOTAL_DIES, TOTAL_PLANES, TOTAL_CHANNEL_BW_MBPS, _loaded
     if any(globals()[n] is None for n in _GEOMETRY_NAMES):
         raise RuntimeError("Cannot recompute: some geometry values are still None")
     SECTORS_PER_PAGE = PAGE_SIZE_BYTES // SECTOR_SIZE
-    TOTAL_PLANES = CHANNELS * CHIPS_PER_CH * DIES_PER_CHIP * PLANES_PER_DIE
+    TOTAL_DIES = CHANNELS * CHIPS_PER_CH * DIES_PER_CHIP
+    TOTAL_PLANES = TOTAL_DIES * PLANES_PER_DIE
     TOTAL_CHANNEL_BW_MBPS = CHANNELS * CHANNEL_BW_MBPS
     _loaded = True
 
@@ -194,17 +196,21 @@ def load_from_workload_xml(xml_path: str) -> Dict[str, list]:
 def theory_iops(request_size_bytes: int) -> float:
     """Theoretical max IOPS under CWDP perfect interleaving.
 
-    Pipeline model (NVDDR2):
-      BusTime  = CMD(290) + Setup(30) + DataOut
+    Pipeline model:
+      BusTime  = CMD + Setup + DataOut
       DataOut  = (S / 2) × (2000 / CHANNEL_BW_MBPS)  ns
       PipeCycle = tR + CHANNELS × BusTime
-      IOPS     = (CHANNELS × PLANES_PER_DIE × … ) / PipeCycle
+      IOPS     = TOTAL_DIES × 1e9 / PipeCycle
+
+    TOTAL_DIES = CHANNELS × CHIPS_PER_CH × DIES_PER_CHIP
+    represents the number of independent die-level command queues
+    that can be pipelined simultaneously.
     """
     _require_loaded()
     data_out_ns = (request_size_bytes / 2.0) * (2000.0 / CHANNEL_BW_MBPS)
     bus_time_ns = CMD_TRANSFER_NS + DATA_SETUP_NS + data_out_ns
     pipeline_cycle_ns = NAND_tR_NS + CHANNELS * bus_time_ns
-    return 64e9 / pipeline_cycle_ns
+    return TOTAL_DIES * 1e9 / pipeline_cycle_ns
 
 
 def theory_bandwidth_mbps(request_size_bytes: int) -> float:
@@ -427,25 +433,54 @@ def write_trace_file(
 
     Trace format (per line):
         <arrival_ns> <device_id> <lba> <sectors> <req_type>
-    All requests arrive at T=0 (MemoryEngine has no concept of time);
-    device_id cycles 0..15 for MQSim multi-queue compatibility.
+    All requests arrive at T=0 (MemoryEngine has no concept of time).
+
+    device_id is assigned by CWDP channel so that MQSim's multi-queue
+    dispatch naturally interleaves commands across all available channels.
+    Lines are round-robin sorted by channel to prevent channel clustering
+    that would otherwise serialize the pipeline.
     """
+    _require_loaded()
     addr_list, size_list, type_list = build_trace_lines(mem_req_list, cfg)
 
     d = os.path.dirname(output_path)
     if d:
         os.makedirs(d, exist_ok=True)
 
-    total_bytes = 0
-    with open(output_path, "w") as f:
-        for i, (addr, size, req_type) in enumerate(
-                zip(addr_list, size_list, type_list)):
-            lba = addr // SECTOR_SIZE
-            sectors = math.ceil(size / SECTOR_SIZE)
-            f.write(f"0 {i % 16} {lba} {sectors} {req_type}\n")
-            total_bytes += size
+    # Compute CWDP channel for each line and group by channel
+    pages_per_cwdp_group = PLANES_PER_DIE * DIES_PER_CHIP * CHIPS_PER_CH
+    num_channels = CHANNELS
 
-    return total_bytes, len(addr_list)
+    # Build (addr, size, req_type, channel) tuples
+    lines = []
+    for addr, size, req_type in zip(addr_list, size_list, type_list):
+        lba = addr // SECTOR_SIZE
+        page = lba // SECTORS_PER_PAGE
+        cwdp_chan = (page // pages_per_cwdp_group) % num_channels
+        lines.append((lba, size, req_type, cwdp_chan))
+
+    # Round-robin interleave: write one line per channel, then repeat.
+    # This ensures consecutive lines in the trace file go to different
+    # channels, maximising NAND pipeline utilization.
+    bucketed = {ch: [] for ch in range(num_channels)}
+    for l in lines:
+        bucketed[l[3]].append(l)
+
+    max_per_ch = max(len(b) for b in bucketed.values())
+
+    total_bytes = 0
+    line_count = 0
+    with open(output_path, "w") as f:
+        for round_idx in range(max_per_ch):
+            for ch in range(num_channels):
+                if round_idx < len(bucketed[ch]):
+                    lba, size, req_type, cwdp_chan = bucketed[ch][round_idx]
+                    sectors = math.ceil(size / SECTOR_SIZE)
+                    f.write(f"0 {cwdp_chan} {lba} {sectors} {req_type}\n")
+                    total_bytes += size
+                    line_count += 1
+
+    return total_bytes, line_count
 
 
 # =====================================================================
