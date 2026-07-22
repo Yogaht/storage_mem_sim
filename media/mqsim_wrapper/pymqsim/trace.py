@@ -330,14 +330,11 @@ def build_trace_lines(
 ) -> Tuple[List[int], List[int], List[int]]:
     """MemoryRequests → (addr, size, type) trace-line triples.
 
-    Pipeline: merge → slice by request_size → sector-align.
+    Pipeline: merge → sector-align → slice by request_size.
 
-    When NOT merging sub-page requests, a page-first traversal is used
-    to ensure consecutive trace lines map to different LPAs so MQSim's
-    CWDP allocator distributes them across channels.
-
-    Addresses are sector-aligned (512 B) to preserve the page-offset
-    that MQSim uses for sub-page sector bitmap computation.
+    Addresses are sector-aligned: the range [addr, addr+size) is expanded
+    to [aligned_down(addr), aligned_up(addr+size)), matching real NVMe
+    behaviour where the device only sees sector-granularity LBAs.
     """
     if not mem_req_list:
         return [], [], []
@@ -352,54 +349,22 @@ def build_trace_lines(
             for mr in mem_req_list
         ]
 
-    # 2. slice by request_size, sector-align
+    # 2. sector-align + slice by request_size
     addr_list, size_list, type_list = [], [], []
 
-    # ── page-first traversal for unmerged sub-page requests ──────────
-    # MQSim CWDP: LPA % CHANNELS → Channel.  Same-page requests share
-    # one LPA → one channel → serialized pipeline.
-    # Page-first puts consecutive requests on consecutive pages,
-    # giving each its own LPA → own channel.
-    # Only apply when every chunk fits in one line (n_lines == 1).
-    # Multi-line chunks should stay sequential (merged or large I/O).
-    single_line_chunks = all(
-        math.ceil(s / cfg.request_size) <= 1 for _, s, _ in chunks)
-
-    if (not cfg.merge_contiguous
-            and cfg.request_size < PAGE_SIZE_BYTES
-            and single_line_chunks):
-        _require_loaded()
-        lines_per_page = PAGE_SIZE_BYTES // cfg.request_size
-        total_chunks = len(chunks)
-        total_pages = math.ceil(total_chunks / lines_per_page)
-        # reserve one line per chunk (sub-page: line_size == chunk_size)
-        idx = 0
-        for off in range(lines_per_page):
-            for pg in range(total_pages):
-                if idx >= total_chunks:
-                    break
-                base_addr, total_size, rtype = chunks[idx]
-                line_size = min(total_size, cfg.request_size)
-                aligned = pg * PAGE_SIZE_BYTES + off * line_size
-                addr_list.append(aligned)
-                size_list.append(line_size)
-                type_list.append(rtype)
-                idx += 1
-            if idx >= total_chunks:
-                break
-
-    else:
-        # ── normal: sequential slicing ──
-        for base_addr, total_size, rtype in chunks:
-            line_size = min(total_size, cfg.request_size)
-            offset = 0
-            while offset < total_size:
-                chunk = min(total_size - offset, line_size)
-                aligned = ((base_addr + offset) // SECTOR_SIZE) * SECTOR_SIZE
-                addr_list.append(aligned)
-                size_list.append(chunk)
-                type_list.append(rtype)
-                offset += chunk
+    for base_addr, total_size, rtype in chunks:
+        aligned_start = (base_addr // SECTOR_SIZE) * SECTOR_SIZE
+        aligned_end = ((base_addr + total_size + SECTOR_SIZE - 1)
+                       // SECTOR_SIZE) * SECTOR_SIZE
+        aligned_total = aligned_end - aligned_start
+        line_size = min(aligned_total, cfg.request_size)
+        offset = 0
+        while offset < aligned_total:
+            chunk = min(aligned_total - offset, line_size)
+            addr_list.append(aligned_start + offset)
+            size_list.append(chunk)
+            type_list.append(rtype)
+            offset += chunk
 
     return addr_list, size_list, type_list
 

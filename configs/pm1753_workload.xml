@@ -1,51 +1,22 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Samsung PM1753 Workload — 16CH 4-plane Flagship SSD
-  Matching config: pm1753_ssdconfig.xml
-
-  NAND Geometry (from ssdconfig):
-    16 CH × 4 chip/CH × 2 die/chip × 4 plane/die = 512 planes
-    Page: 16,384 + 2,208 B, Block: 768 pages, Plane: 512 blocks
-    Raw capacity: ~3.30 TB (reduced for MQSim memory; real PM1753: ~32 TB)
-
-  Resource ID ranges:
-    Channel_IDs: 0–15  (16 channels)
-    Chip_IDs:    0–3   (4 chip per channel)
-    Die_IDs:     0–1   (2 die per chip)
-    Plane_IDs:   0–3   (4 plane per die, Samsung V8 V-NAND)
-
-  CWDP addressing (Channel-Way-Die-Plane):
-    Pages are distributed across channels in CWDP order:
-    Page group size = 4 planes × 2 dies × 4 chips = 32 pages/channel-group
-    page 0 → ch0, page 1 → ch1, …, page 15 → ch15,
-    page 16 → ch0, page 17 → ch1, …
-    (where "page" is the global page index = LBA_sector // 32)
-
-  Performance targets (theory model — see ssdconfig for formulas):
-      4 KB random read:  ~1,643,000 IOPS  (IOPS-Bound, BusUtil ≈ 42.1%)
-    128 KB sequential:   ~15,340 MB/s      (BW-Bound, BusUtil ≈ 95.9%)
-    Real-world ref:      ~3,400K IOPS / ~14,800 MB/s (Samsung PM1753 official)
-
-  Usage:
-    Set <File_Path> to the actual trace file to replay.
-    <Percentage_To_Be_Executed> controls how much of the trace is replayed.
-    <Relay_Count> sets repeat count. <Time_Unit> is always NANOSECOND.
+  Samsung PM1753 Workload — 16CH 4-plane flagship
+  Resource IDs (matching pm1753_ssdconfig.xml):
+    Channel_IDs: 0-15   (16 channels)
+    Chip_IDs:    0-3    (4 chip/channel)
+    Die_IDs:     0-1    (2 die/chip)
+    Plane_IDs:   0-3    (4 plane/die, Samsung V8 V-NAND)
 -->
 <MQSim_IO_Scenarios>
     <IO_Scenario>
         <IO_Flow_Parameter_Set_Trace_Based>
             <Priority_Class>URGENT</Priority_Class>
             <Device_Level_Data_Caching_Mode>WRITE_CACHE</Device_Level_Data_Caching_Mode>
-            <!-- 16 channels (0–15), matching Flash_Channel_Count=16 -->
             <Channel_IDs>0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15</Channel_IDs>
-            <!-- 4 chip per channel -->
             <Chip_IDs>0,1,2,3</Chip_IDs>
-            <!-- 2 die per chip -->
             <Die_IDs>0,1</Die_IDs>
-            <!-- 4 plane per die (Samsung V8 V-NAND) -->
             <Plane_IDs>0,1,2,3</Plane_IDs>
             <Initial_Occupancy_Percentage>50</Initial_Occupancy_Percentage>
-            <!-- Replace with actual trace file path -->
             <File_Path>traces/tpcc-small.trace</File_Path>
             <Percentage_To_Be_Executed>100</Percentage_To_Be_Executed>
             <Relay_Count>1</Relay_Count>

@@ -1,4 +1,93 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ╔══════════════════════════════════════════════════════════════════════════╗
+  ║            Huawei Ascend A3 16CH — Enterprise NVMe SSD Config            ║
+  ╚══════════════════════════════════════════════════════════════════════════╝
+
+  ── 资料来源 ─────────────────────────────────────────────────────────────
+  · YMTC 232L Xtacking 3.0 3D TLC NAND (YMTC = 长江存储)
+    IEICE 2023-2024 paper: "A 232-layer Xtacking 3.0 3D TLC NAND Flash"
+    关键参数: 6-plane (2×3 Center X-DEC), 16 KB page, tR=37/45/37 µs
+  · Memblaze PBlaze7 7A46 (国产企业级 NVMe SSD, 参考对标)
+    PCIe Gen5 ×4, ~16 GB/s host interface, ~15 TB capacity class
+  · 华为昇腾 A3 服务器 SSD 子系统 — 16CH 旗舰控制器
+
+  ── NAND 几何 ─────────────────────────────────────────────────────────────
+    CHANNELS          = 16        flash 通道数
+    CHIPS_PER_CH      =  4        每通道 NAND 封装数 (Chip / Way)
+    DIES_PER_CHIP     =  2        每封装晶粒数
+    PLANES_PER_DIE    =  6        每晶粒平面数 (YMTC 232L: 2×3 Center X-DEC)
+    ─────────────────────────────────────────
+    TOTAL_DIES        = 16×4×2 = 128
+    TOTAL_PLANES      = 128×6  = 768
+
+  ── Page / Block / Plane 层级 ─────────────────────────────────────────────
+    PAGE_SIZE_BYTES   = 16,384 B (16 KB) + 1,942 B metadata
+    PAGES_PER_BLOCK   = 576 (TLC: 192 wordlines × 3 bits/cell)
+    BLOCKS_PER_PLANE  = 512 (MQSim 仿真限制, 实际 ~2000+)
+    ─────────────────────────────────────────
+    每 Block 容量       = 576 × 16 KB ≈ 9.2 MB
+    每 Plane 容量       = 512 × 9.2 MB ≈ 4.7 GB
+    每 Die 容量         = 6 × 4.7 GB ≈ 28.3 GB
+    Raw NAND 总容量     = 128 × 28.3 GB ≈ 3,622 GB ≈ 3.6 TB
+    User 容量 (OP=7%)   ≈ 3,622 / 1.07 ≈ 3,385 GB ≈ 3.3 TB
+    注: 实际 YMTC 232L 单 die 512 Gb (64 GB), 此处 BLOCKS_PER_PLANE=512
+         为 MQSim 仿真内存约束的缩减值
+
+  ── 时序参数 ───────────────────────────────────────────────────────────────
+    NAND 读 (tR)       = 37,000 / 45,000 / 37,000 ns (LSB / CSB / MSB)
+                         YMTC 232L IEICE 论文值
+    NAND 写 (tProg)    = 390,000 ns (TLC, 参考 Samsung PM9A3)
+    NAND 擦除 (tErase) = 3,500,000 ns (3D TLC 典型值)
+    Channel BW         = 1,600 MB/s/ch (NVDDR2 ~1600 MT/s)
+    Total Channel BW   = 16 × 1,600 = 25,600 MB/s = 25.6 GB/s
+    Flash 协议          = NVDDR2 (ONFI 3.x timing: CMD=290ns, Setup=30ns)
+                         注: YMTC 232L 支持 NVDDR3 (ONFI 4.x, 2400 MT/s),
+                         MQSim 不支持 NVDDR3, 故降级使用 NVDDR2
+    P/E Cycles         = 3,000 (企业级 TLC)
+
+  ── Host 接口 ──────────────────────────────────────────────────────────────
+    PCIe Gen5 ×4       ≈ 16 GB/s (4 lanes × 4 GB/s/lane)
+    NVMe Queue Depth   = 65,535
+    DRAM Cache         = 2 GB (ADVANCED, SHARED)
+    CMT (Cache Mapping Table) = 16M entries (与容量成比例)
+
+  ── FTL / GC 配置 ──────────────────────────────────────────────────────────
+    Address Mapping    = PAGE_LEVEL
+    Plane Allocation   = CWDP (Channel → Way/Chip → Die → Plane)
+    GC Policy          = RGA (Greedy), threshold 5%, hard threshold 0.5%
+    Overprovisioning   = 7%
+    Wear Leveling      = Dynamic + Static (threshold 100)
+
+  ── 理论性能 (CWDP Pipeline Model, pymqsim.trace) ─────────────────────────
+    公式: BusTime = CMD + Setup + DataOut
+          DataOut = (ReqSize/2) × (2000/CH_BW_MBps) ns
+          PipeCycle = tR + CHANNELS × BusTime
+          IOPS = TOTAL_DIES × 1e9 / PipeCycle
+          BW   = IOPS × ReqSize / 1e6 (MB/s)
+          BusUtil = CH×DataOut / (tR + CH×BusTime)
+
+    ReqSize   IOPS           BW               BusUtil   判定
+    ─────────────────────────────────────────────────────────────
+      4 KB    1,540,684      6,311 MB/s ( 6.3 GB/s)   49.3%   IOPS-Bound
+      8 KB    1,031,925      8,454 MB/s ( 8.5 GB/s)   66.0%   过渡区
+     16 KB      621,480     10,182 MB/s (10.2 GB/s)   79.5%   过渡区
+     32 KB      346,133     11,342 MB/s (11.3 GB/s)   88.6%   BW-Bound
+    128 KB       94,616     12,401 MB/s (12.4 GB/s)   96.9%   BW-Bound
+    ─────────────────────────────────────────────────────────────
+    峰值 BW ≈ 12.4 GB/s (受限于 NAND tR + 总线流水线, 而非原始 25.6 GB/s CH BW)
+
+    解读: 小 I/O (≤8KB) 时瓶颈在 NAND 读取延迟 + 命令开销 (IOPS-Bound),
+          大 I/O (≥32KB) 时瓶颈在通道总线带宽 (BW-Bound)。
+          16KB 是拐点 — 恰好等于 NAND page size, 无读放大。
+
+  ── 参考 ───────────────────────────────────────────────────────────────────
+    · test_load_ascend_a3_16ch_geometry (tests/test_mqsim_media.py)
+    · theory_iops / theory_bandwidth_mbps / theory_bus_utilization
+      (media/mqsim_wrapper/pymqsim/trace.py)
+    · ascend_a3_16ch_workload.xml (配套 workload 配置)
+    · configs/ascend_a3_16ch_bw.json / iops.json (带宽/IOPS 测试配置)
+-->
 <Execution_Parameter_Set>
     <Host_Parameter_Set>
         <!-- PCIe Gen5 ×4: ~4 GB/s/lane → ~16 GB/s total (Memblaze PBlaze7 7A46 class) -->
