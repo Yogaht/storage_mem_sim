@@ -62,30 +62,6 @@ class MemoryEngineMetrics:
     mem_metrics_list: List[MemoryMetrics] = field(default_factory=list)
 
     def update(self, metrics: MemoryMetrics, total_bytes: int):
-        """Accumulate a single MemoryMetrics into the cumulative counters.
-
-        ``iops`` and ``bandwidth`` are **rate metrics** — they cannot be
-        summed across batches.
-
-        **Bandwidth**: ``total_bytes / total_time`` is always correct
-        because ``MemoryEngineMetrics`` explicitly tracks ``total_bytes``.
-        No time-weighted averaging is needed.
-
-        **IOPS**: ``global_memory_reqs_num / total_time`` counts engine-
-        level MemoryRequest objects, which do NOT match the trace-line-
-        level operations that the simulator actually processes (due to
-        slicing by request_size).  We therefore prefer the time-weighted
-        average of per-batch ``metrics.iops`` when the backend provides
-        it, falling back to the count-based formula for backends that
-        do not populate ``metrics.iops`` (e.g. Analytic stubs).
-
-        Time-weighted average (when metrics.iops > 0):
-
-            R_new  =  R_old × (T_old / T_new)  +  r_new × (t_new / T_new)
-
-        This is mathematically equivalent to ``total_ops / total_time``
-        (see media_metrics.py for the full derivation).
-        """
         old_time = self.total_time
 
         # ---- additive counters ----
@@ -102,12 +78,6 @@ class MemoryEngineMetrics:
         # ---- bandwidth: total_bytes / total_time (exact, always works) ----
         self.bandwidth = self.total_bytes / self.total_time
 
-        # ---- IOPS: time-weighted (preferred) ----
-        # Only updated when the backend actually provides IOPS data.
-        # global_memory_reqs_num counts engine-level MemoryRequest objects
-        # (before trace slicing), so it does NOT give the correct IOPS.
-        # When metrics.iops == 0 (e.g. Analytic / stub backends), we simply
-        # leave self.iops at its previous value — no guesswork.
         if old_time > 0 and metrics.iops > 0:
             old_weight = old_time / self.total_time
             new_weight = metrics.total_time / self.total_time
