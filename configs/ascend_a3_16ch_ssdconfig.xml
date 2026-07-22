@@ -81,12 +81,6 @@
           大 I/O (≥32KB) 时瓶颈在通道总线带宽 (BW-Bound)。
           16KB 是拐点 — 恰好等于 NAND page size, 无读放大。
 
-  ── 参考 ───────────────────────────────────────────────────────────────────
-    · test_load_ascend_a3_16ch_geometry (tests/test_mqsim_media.py)
-    · theory_iops / theory_bandwidth_mbps / theory_bus_utilization
-      (media/mqsim_wrapper/pymqsim/trace.py)
-    · ascend_a3_16ch_workload.xml (配套 workload 配置)
-    · configs/ascend_a3_16ch_bw.json / iops.json (带宽/IOPS 测试配置)
 -->
 <Execution_Parameter_Set>
     <Host_Parameter_Set>
