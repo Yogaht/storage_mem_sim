@@ -109,14 +109,6 @@
           在深队列场景下 A3 可能有更好的 QoS。
           大 I/O 时 PM1753 带宽优势明显 (+23.7%), 来自更快的通道。
 
-  ── 参考 ───────────────────────────────────────────────────────────────────
-    · test_load_pm1753_geometry (tests/test_mqsim_media.py — 已精简移除,
-      可在 git history 中找回)
-    · theory_iops / theory_bandwidth_mbps / theory_bus_utilization
-      (media/mqsim_wrapper/pymqsim/trace.py)
-    · configs/pm1753_bw.json / iops.json (带宽/IOPS 测试配置)
-    · configs/pm1753_workload.xml (配套 workload 配置)
-    · 对比: configs/ascend_a3_16ch_ssdconfig.xml (YMTC 232L 国产方案)
 -->
 <Execution_Parameter_Set>
     <Host_Parameter_Set>
