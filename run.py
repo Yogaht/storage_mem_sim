@@ -46,7 +46,7 @@ def main():
 
     # ---- common params (with CLI overrides) ----
     num_requests = args.num_requests or mc.get("num_requests", 64)
-    request_size = args.size or mc.get("request_size", 64)
+    request_size = args.size or mc.get("request_size", 512*8)
 
     # ---- build MediaConfig ----
     media_cfg = MediaConfig(
@@ -59,7 +59,6 @@ def main():
         workload_config_path=os.path.abspath(mc["workload_config"]) if mc.get("workload_config") else "",
         request_size_bytes=request_size,
         merge_contiguous=mc.get("merge_contiguous", True),
-        cwdp_aware=mc.get("cwdp_aware", False),
     )
 
     engine = MemoryEngine(MemoryEngineConfig(

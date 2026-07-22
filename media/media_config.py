@@ -40,7 +40,6 @@ class MediaConfig:
     workload_config_path: str = ""
     request_size_bytes: int = 131072
     merge_contiguous: bool = True
-    cwdp_aware: bool = False
 
     @property
     def scale_factor(self) -> float:

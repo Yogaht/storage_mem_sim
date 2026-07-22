@@ -20,10 +20,12 @@ MemoryEngine.issue_request()
 | 字段 | 说明 |
 |---|---|
 | `arrival_ns` | 到达时间（固定为 0，MemoryEngine 无时序） |
-| `device_id` | 设备号（0..15 循环，适配 MQSim 多队列） |
-| `lba` | 逻辑块地址 = `addr / 512`（地址已页对齐到 `PAGE_SIZE_BYTES` 边界，LBA 始终为 `SECTORS_PER_PAGE` 的倍数） |
+| `device_id` | CWDP 通道号：`(page // pages_per_group) % CHANNELS`。每个 group = PLANES×DIES×CHIPS 个连续 page 映射到同一通道，相邻 group 映射到下一通道 |
+| `lba` | 逻辑块地址 = `addr / 512`（地址已 sector 对齐到 512B 边界，保留页内扇区偏移） |
 | `sectors` | 扇区数 = `ceil(size / 512)` |
 | `req_type` | 1 = 读, 0 = 写 |
+
+> device_id 不是简单的 `i % N` 轮转，而是基于 CWDP 物理布局：同一通道的 32 pages（PLANES×DIES×CHIPS）编为一组，连续请求需跨组才能命中不同通道。
 
 ### 请求合并
 
@@ -35,10 +37,13 @@ MemoryEngine.issue_request()
 
 ### 控制参数 (`mqsim.json`)
 
-| 参数 | 带宽测试 | IOPS 测试 |
-|------|---------|----------|
-| `merge_contiguous` | `true` | `false` |
-| `request_size` | 131072 (128 KB) | 4096 (4 KB) |
+| 参数 | 带宽测试 | IOPS 测试 | 说明 |
+|------|---------|----------|------|
+| `merge_contiguous` | `true` | `false` | 是否合并连续同类请求 |
+| `request_size` | 131072 (128 KB) | 4096 (4 KB) | 每条 trace line 最大字节数 |
+| `cwdp_aware` | `true` | `true` | CWDP 通道重分布：将地址映射到不同 CWDP group，确保所有通道均匀使用 |
+
+> `merge_contiguous` 和 `cwdp_aware` 通过 `MediaConfig` → `MQSimMediaSystem._init_mqsim()` → `TraceSliceConfig` 自动传递，无需手动创建 TraceSliceConfig。
 
 ### MQSim 配置文件
 
@@ -65,7 +70,7 @@ from pymqsim import (
 )
 
 # 1. 生成 trace 文件
-cfg = TraceSliceConfig(merge_contiguous=True, request_size=131072)
+cfg = TraceSliceConfig(merge_contiguous=True, request_size=131072, cwdp_aware=True)
 total_bytes, lines = write_trace_file(mem_req_list, "trace.txt", cfg)
 
 # 2. 生成 workload XML（基于 default_workload.xml 模板，替换 trace 路径）
@@ -77,7 +82,6 @@ result = run_simulation(
     workload_xml_path="workload.xml",
 )
 
-print(f"Latency:  {result.avg_latency_ns:.1f} ns")
 print(f"Bandwidth: {result.bandwidth_bytes_per_sec / 1e9:.2f} GB/s")
 print(f"IOPS:     {result.total_iops:.0f}")
 

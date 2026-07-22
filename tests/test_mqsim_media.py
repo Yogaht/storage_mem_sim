@@ -49,6 +49,7 @@ def _make_media_config(**kwargs):
         "ssd_config_path": "",
         "workload_config_path": "",
         "request_size_bytes": 131072,
+        "merge_contiguous": True,
     }
     defaults.update(kwargs)
     return MediaConfig(**defaults)
@@ -273,6 +274,7 @@ class TestTraceGeneration(unittest.TestCase):
         sectors_per_chunk = 8192 // 512  # 16 sectors
         self.assertIn("0 0 0 16 1", lines)
         self.assertIn("0 1 16 16 1", lines)
+
 
     def test_write_trace_iops_mode_no_merge(self):
         """No merge: each request sliced individually by request_size."""

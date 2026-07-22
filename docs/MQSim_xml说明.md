@@ -194,3 +194,49 @@ Plane_No_Per_Die = 2       →    Plane_IDs   = 0..1
 ```
 
 可以指定子集（如只用 4 个通道），但范围不能超出硬件定义。
+
+
+设备id：
+| 参数                        | 值          | 对多流的影响                                       |
+| ------------------------- | ---------- | -------------------------------------------- |
+| `IO_Queue_Depth`          | **65535**  | 每个 device\_id 对应的 SQ 最大深度（NVMe 上限）           |
+| `Queue_Fetch_Size`        | **512**    | 每个 SQ 每次最多取 512 个请求进入设备级队列                   |
+| `Data_Cache_Sharing_Mode` | **SHARED** | 所有 device\_id 的流**共享** 256MB Data Cache，互相竞争 |
+| `CMT_Sharing_Mode`        | **SHARED** | 所有 device\_id 的流**共享** 2MB 映射缓存，互相竞争         |
+| `PCIe_Lane_Count`         | **4**      | 前端带宽 = 4 GB/s（1GB/s × 4 lanes），是所有流共享的总线     |
+增加 device_id 个数的核心好处是提升并发度、更充分利用 SSD 后端并行资源，从而更接近真实 NVMe 多队列场景下的性能上限。具体可以从以下几个维度理解：
+
+## 三、如何根据配置参数计算理论iops和理论带宽
+
+### 一、核心公式
+#### 1. 总 Plane 数（决定最大并行度）
+N_planes = Flash_Channel_Count × Chip_No_Per_Channel × Die_No_Per_Chip × Plane_No_Per_Die
+
+#### 2. 单次操作时间
+数据传输时间（数据通过 NAND 通道传输的时间）：
+t_transfer = Page_Capacity / (Channel_Transfer_Rate × Flash_Channel_Width)
+           = 16384 bytes / (1600 × 10^6 × 1 byte/s)
+           = 10240 ns = 10.24 µs
+
+读一个 page 的时间：
+t_read = Page_Read_Latency + t_transfer
+
+| Page 类型 | 公式                  | 结果           |
+| ------- | ------------------- | ------------ |
+| LSB     | 35000 ns + 10240 ns | **45.24 µs** |
+| CSB     | 50000 ns + 10240 ns | **60.24 µs** |
+| MSB     | 75000 ns + 10240 ns | **85.24 µs** |
+
+写一个 TLC page 的时间（需要 3 步）：
+
+t_write_TLC = (Page_Program_Latency_LSB + t_transfer)
+            + (Page_Program_Latency_CSB + t_transfer)
+            + (Page_Program_Latency_MSB + t_transfer)
+            = 510.24 + 760.24 + 1210.24 = **2480.72 µs**
+
+#### 3. IOPS 计算
+IOPS = N_parallel / t_operation
+其中 N_parallel 是实际同时工作的 plane 数（现实远小于 1024）
+
+#### 4. 带宽计算
+Bandwidth = IOPS × Page_Capacity

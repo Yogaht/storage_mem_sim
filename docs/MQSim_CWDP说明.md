@@ -181,14 +181,15 @@ size = N × CHANNELS × PAGE_SIZE   (N 为任意正整数)
 
 ### 5.3 实例：trace 输入后的物理映射
 
-**输入 trace**：
+**输入 trace**（128KB 大 I/O，已合并）：
 
 ```
-0 0 0 256 1       # LBA=0,    16页 → LPN 0..15
-0 1 256 256 1     # LBA=256,  16页 → LPN 16..31
-0 2 512 256 1     # LBA=512,  16页 → LPN 32..47
-0 3 768 256 1     # LBA=768,  16页 → LPN 48..63
+0 0 0 256 1       # dev 0, LBA=0,    16页 → LPN 0..15
+0 1 256 256 1     # dev 1, LBA=256,  16页 → LPN 16..31
+0 2 512 256 1     # dev 2, LBA=512,  16页 → LPN 32..47
+0 3 768 256 1     # dev 3, LBA=768,  16页 → LPN 48..63
 ```
+> device_id `0,1,2,3` = `i % CHANNELS` 简单轮转，仅格式兼容，MQSim 不读取。
 
 **Line 0 内部 16 页的 CWDP 分布**（LPN 0..15）：
 
@@ -223,11 +224,9 @@ Line 2 起始 LPN=32 → Ch(32%8)=0   ← 同 Ch0
 Line 3 起始 LPN=48 → Ch(48%8)=0   ← 同 Ch0
 ```
 
-> 四条 line 都从 Ch0 开始。因为 `gcd(16, 8) = 8 ≠ 1`，连续 line 的 LPN 步长 16 与通道数 8 不互质，起始页始终落在同一通道。
+> 四条 line 都从 Ch0 开始。但**这不影响性能**——MQSim 处理 trace 是串行的，每条 line 内部 16 页已通过 CWDP 自动跨 8 通道并行。单条 128KB 请求本身就能达到峰值带宽。
 
-**这影响性能吗？**
-
-不影响——因为 MQSim 处理 trace 是**串行的**：Line 0 执行完才执行 Line 1，不存在多 line 并行。每条 line 内部 16 页已经通过 CWDP 自动利用全部 8 通道并行读取，所以单条 128KB 请求本身就能达到峰值带宽。通道塌缩只在**多次独立 I/O 之间存在资源竞争**时才会表现出来（如多流并发场景）。
+trace 文件中的 `device_id` 用 `i % CHANNELS` 简单轮转（MQSim 内部不读取此列），物理通道完全由 LBA → LPA → CWDP 决定。
 
 ### 5.4 物理地址总结
 
@@ -244,8 +243,25 @@ Line 3 起始 LPN=48 → Ch(48%8)=0   ← 同 Ch0
 
 ## 六、与 trace.py 的关系
 
-`trace.py` 本身不参与 CWDP 映射——它只负责将 MemoryRequest 的地址写入 trace 文件。MQSim 在仿真时根据 `Plane_Allocation_Scheme` 配置自行完成 LBA → 物理位置的映射。
+`trace.py` 不参与 CWDP 映射——它只负责将 MemoryRequest 的地址写入 trace 文件。MQSim C++ 在仿真时根据 `Plane_Allocation_Scheme` 配置自行完成 LBA → 物理位置的映射。
 
-`load_from_ssdconfig_xml()` 中读取的 `CHANNELS`, `CHIPS_PER_CH`, `DIES_PER_CHIP`, `PLANES_PER_DIE`, `PAGE_SIZE_BYTES` 等几何参数，可用于：
-- 理论公式 (`theory_iops`, `theory_bandwidth_mbps`, `theory_bus_utilization`) 的性能估算
-- 地址对齐和页边界计算 (`align_lba`, `SECTORS_PER_PAGE`)
+`load_from_ssdconfig_xml()` 中读取的 `CHANNELS`, `CHIPS_PER_CH`, `DIES_PER_CHIP`, `PLANES_PER_DIE`, `PAGE_SIZE_BYTES` 等几何参数，用于：
+- 理论公式 (`theory_iops`, `theory_bandwidth_mbps`, `theory_bus_utilization`)
+- page-first traversal 的 `lines_per_page` 计算（不合并 + 子页请求时）
+- 地址 sector 对齐
+
+## 七、MQSim C++ CWDP 源码确认
+
+`Address_Mapping_Unit_Page_Level.cpp:836`（写路径）和 `:1231`（读路径）：
+
+```cpp
+case Flash_Plane_Allocation_Scheme_Type::CWDP:
+    targetAddress.ChannelID = domain->Channel_ids[(unsigned int)(lpn % domain->Channel_no)];
+    targetAddress.ChipID    = domain->Chip_ids[(unsigned int)((lpn / domain->Channel_no) % domain->Chip_no)];
+    targetAddress.DieID     = domain->Die_ids[(unsigned int)((lpn / (...)) % domain->Die_no)];
+    targetAddress.PlaneID   = domain->Plane_ids[(unsigned int)((lpn / (...)) % domain->Plane_no)];
+```
+
+**连续 LPA 天然跨通道**：`LPA 0 → Ch 0, LPA 1 → Ch 1, ..., LPA 15 → Ch 15, LPA 16 → Ch 0`。
+
+trace 文件中的 `device_id` 列（`ASCIITraceDeviceColumn`）在 MQSim C++ 中**定义但未被任何 .cpp 读取**。物理通道完全由 LBA → LPA → CWDP 决定。
