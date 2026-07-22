@@ -393,13 +393,13 @@ Trace 文件中的 Address (LBA/sector)
 ```cpp
 LPA_type FTL::Convert_host_logical_address_to_device_address(LHA_type lha)
 {
-    return lha / page_size_in_sectors;  // = lha / 16
+    return lha / page_size_in_sectors;  // = lha / 16 (默认 8KB 页) 或 lha / 32 (16KB 页)
 }
 ```
 
-**含义**：每 16 个连续扇区 (LBA) 属于同一个逻辑页 (LPA)。LBA 对 16 取余的结果就是**页内扇区偏移**（0~15）。
+**含义**：每 `sectors_per_page` 个连续扇区属于同一个逻辑页。`sectors_per_page` 对 512 取余为**页内扇区偏移**。
 
-**具体例子**：
+**以默认 config (8KB 页, sectors_per_page=16) 为例**：
 
 | LBA | LPA | 页内偏移 | 说明 |
 |-----|-----|---------|------|
@@ -410,7 +410,9 @@ LPA_type FTL::Convert_host_logical_address_to_device_address(LHA_type lha)
 | 255 | 15 | 15 | 第 15 页的最后一个扇区 |
 | 256 | 16 | 0 | 第 16 页的第 0 个扇区 |
 
-对于 trace 行 `0 0 0 256 1`（LBA=0, Size=256 sectors, Type=READ）：
+> **analytic/ascend config (16KB 页, sectors_per_page=32)** 时，LBA 0-31→LPA 0，以此类推。
+
+对于 trace 行 `0 0 0 256 1`（LBA=0, Size=256 sectors, Type=READ，默认 config）：
 - 访问范围：LBA 0 ~ 255，共 256 个扇区 = 128KB
 - 这 256 个扇区属于 LPA 0 到 LPA 15（256/16 = 16 个逻辑页）
 
@@ -609,8 +611,8 @@ else:
 | 问题 | 答案 |
 |------|------|
 | trace 中的 Address 是什么？ | **起始 LBA**，以 512B sector 为单位 |
-| 如何知道访问哪个具体扇区？ | LBA → LPA（÷16）→ (Ch,Chip,Die,Plane)（CWDP 轮转）→ (Block,Page)（写前沿海）→ **页内扇区偏移 = LBA % 16** |
-| 为什么除以 16？ | 一个闪存页 8192B，一个扇区 512B，每页恰好 16 个扇区 |
+| 如何知道访问哪个具体扇区？ | LBA → LPA = `LBA / sectors_per_page` → CWDP `LPA % CH` → Channel → (Block,Page)（写前沿海）→ **页内偏移 = LBA % sectors_per_page** |
+| `sectors_per_page` 从哪来？ | `PAGE_SIZE_BYTES / 512`，来自 `ssdconfig.xml` 的 `Page_Capacity`。默认 config 8KB→16，analytic config 16KB→32 |
 | Size 列的作用？ | 表示要访问多少个连续扇区，可能跨多个 LPA / 物理页 |
-| Device 列的作用？ | 仅用于 NVMe 多队列调度（`device_id % 16`），不影响物理地址映射 |
+| Device 列的作用？ | `i % CHANNELS` 轮转（MQSim C++ 源码中定义但未读取），不影响物理映射 |
 | Time 列的作用？ | 仅用于时序调度，不影响物理地址映射 |

@@ -45,13 +45,17 @@ SECTORS_PER_PAGE = 16
 ### 映射公式
 
 ```
-给定 LBA → page = LBA / SECTORS_PER_PAGE
+给定 LBA → SECTORS_PER_PAGE = PAGE_SIZE_BYTES / 512  (默认 8192/512=16)
+       → LPA = LBA / SECTORS_PER_PAGE
 
-channel = page % CHANNELS
-chip    = (page / CHANNELS) % CHIPS_PER_CH
-die     = (page / (CHANNELS × CHIPS_PER_CH)) % DIES_PER_CHIP
-plane   = (page / (CHANNELS × CHIPS_PER_CH × DIES_PER_CHIP)) % PLANES_PER_DIE
+channel = LPA % CHANNELS
+chip    = (LPA / CHANNELS) % CHIPS_PER_CH
+die     = (LPA / (CHANNELS × CHIPS_PER_CH)) % DIES_PER_CHIP
+plane   = (LPA / (CHANNELS × CHIPS_PER_CH × DIES_PER_CHIP)) % PLANES_PER_DIE
 ```
+
+> 这是 MQSim C++ `Address_Mapping_Unit_Page_Level.cpp:836` 中 `CWDP` 分支的实际逻辑。
+> `SECTORS_PER_PAGE` 随 `Page_Capacity` 变化：8KB 页=16，16KB 页=32。
 
 ### 映射规律
 
