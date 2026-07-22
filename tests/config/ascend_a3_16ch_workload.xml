@@ -1,23 +1,20 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!--
-  Ascend A3 16CH Workload — YMTC 232L 6-plane flagship
-  Resource IDs (matching ascend_a3_16ch_ssdconfig.xml):
-    Channel_IDs: 0-15   (16 channels)
-    Chip_IDs:    0-3    (4 chip/channel)
-    Die_IDs:     0-1    (2 die/chip)
-    Plane_IDs:   0-5    (6 plane/die)
--->
 <MQSim_IO_Scenarios>
     <IO_Scenario>
         <IO_Flow_Parameter_Set_Trace_Based>
             <Priority_Class>URGENT</Priority_Class>
             <Device_Level_Data_Caching_Mode>WRITE_CACHE</Device_Level_Data_Caching_Mode>
+            <!-- 16 channels (0–15), matching Flash_Channel_Count=16 -->
             <Channel_IDs>0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15</Channel_IDs>
+            <!-- 4 chip per channel -->
             <Chip_IDs>0,1,2,3</Chip_IDs>
+            <!-- 2 die per chip -->
             <Die_IDs>0,1</Die_IDs>
+            <!-- 6 plane per die (YMTC 232L 2×3 Center X-DEC) -->
             <Plane_IDs>0,1,2,3,4,5</Plane_IDs>
             <Initial_Occupancy_Percentage>50</Initial_Occupancy_Percentage>
-            <File_Path>traces/tpcc-small.trace</File_Path>
+            <!-- Replace with actual trace file path -->
+            <File_Path>/mnt/d/Code/storage_mem_sim/media/mqsim_wrapper/MQSim/trace_test.trace</File_Path>
             <Percentage_To_Be_Executed>100</Percentage_To_Be_Executed>
             <Relay_Count>1</Relay_Count>
             <Time_Unit>NANOSECOND</Time_Unit>

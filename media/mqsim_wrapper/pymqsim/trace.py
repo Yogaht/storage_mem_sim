@@ -268,7 +268,6 @@ class TraceSliceConfig:
     """
     merge_contiguous: bool = True
     request_size: int = 131072
-    cwdp_aware: bool = False  # if True, apply CWDP stride correction to avoid channel collapse
 
     @classmethod
     def from_dict(cls, d: Dict | None) -> "TraceSliceConfig":
@@ -277,18 +276,7 @@ class TraceSliceConfig:
         return cls(
             merge_contiguous=d.get("merge_contiguous", True),
             request_size=d.get("request_size", 131072),
-            cwdp_aware=d.get("cwdp_aware", False),
         )
-
-
-# ---- CWDP helper (only used when cfg.cwdp_aware=True) ----
-
-def _cwdp_stride(pages_per_line: int) -> int:
-    """Smallest stride >= pages_per_line that is co-prime with CHANNELS."""
-    s = pages_per_line
-    while math.gcd(s, CHANNELS) != 1:
-        s += 1
-    return s
 
 
 # =====================================================================
@@ -344,8 +332,10 @@ def build_trace_lines(
 
     Pipeline: merge → slice by request_size → sector-align.
 
-    Trace lines faithfully record the addresses from MemoryRequests —
-    no CWDP stride correction or address redistribution is applied.
+    When NOT merging sub-page requests, a page-first traversal is used
+    to ensure consecutive trace lines map to different LPAs so MQSim's
+    CWDP allocator distributes them across channels.
+
     Addresses are sector-aligned (512 B) to preserve the page-offset
     that MQSim uses for sub-page sector bitmap computation.
     """
@@ -362,62 +352,54 @@ def build_trace_lines(
             for mr in mem_req_list
         ]
 
-    # 2. slice by request_size, page-align, optional CWDP-aware distribution
+    # 2. slice by request_size, sector-align
     addr_list, size_list, type_list = [], [], []
 
-    for base_addr, total_size, rtype in chunks:
-        line_size = min(total_size, cfg.request_size)
-        n_lines = math.ceil(total_size / line_size)
+    # ── page-first traversal for unmerged sub-page requests ──────────
+    # MQSim CWDP: LPA % CHANNELS → Channel.  Same-page requests share
+    # one LPA → one channel → serialized pipeline.
+    # Page-first puts consecutive requests on consecutive pages,
+    # giving each its own LPA → own channel.
+    # Only apply when every chunk fits in one line (n_lines == 1).
+    # Multi-line chunks should stay sequential (merged or large I/O).
+    single_line_chunks = all(
+        math.ceil(s / cfg.request_size) <= 1 for _, s, _ in chunks)
 
-        if not cfg.cwdp_aware or n_lines <= 1:
-            # ── default: sequential slicing ──
+    if (not cfg.merge_contiguous
+            and cfg.request_size < PAGE_SIZE_BYTES
+            and single_line_chunks):
+        _require_loaded()
+        lines_per_page = PAGE_SIZE_BYTES // cfg.request_size
+        total_chunks = len(chunks)
+        total_pages = math.ceil(total_chunks / lines_per_page)
+        # reserve one line per chunk (sub-page: line_size == chunk_size)
+        idx = 0
+        for off in range(lines_per_page):
+            for pg in range(total_pages):
+                if idx >= total_chunks:
+                    break
+                base_addr, total_size, rtype = chunks[idx]
+                line_size = min(total_size, cfg.request_size)
+                aligned = pg * PAGE_SIZE_BYTES + off * line_size
+                addr_list.append(aligned)
+                size_list.append(line_size)
+                type_list.append(rtype)
+                idx += 1
+            if idx >= total_chunks:
+                break
+
+    else:
+        # ── normal: sequential slicing ──
+        for base_addr, total_size, rtype in chunks:
+            line_size = min(total_size, cfg.request_size)
             offset = 0
             while offset < total_size:
                 chunk = min(total_size - offset, line_size)
-                # Align to sector boundary only (512 B) — preserve page-offset
-                # so that MQSim's Find_NVM_subunit_access_bitmap() correctly
-                # computes the sub-page sector bitmap.
                 aligned = ((base_addr + offset) // SECTOR_SIZE) * SECTOR_SIZE
                 addr_list.append(aligned)
                 size_list.append(chunk)
                 type_list.append(rtype)
                 offset += chunk
-        else:
-            # ── cwdp_aware: CWDP stride correction ──
-            start_page = base_addr // PAGE_SIZE_BYTES
-            page_offset = base_addr % PAGE_SIZE_BYTES
-            if line_size < PAGE_SIZE_BYTES:
-                # sub-page: multi-round traversal, preserve page offset
-                lines_per_page = PAGE_SIZE_BYTES // line_size
-                num_pages = math.ceil(n_lines / lines_per_page)
-                emitted = 0
-                for off_idx in range(lines_per_page):
-                    for pg in range(num_pages):
-                        if emitted >= n_lines:
-                            break
-                        off_in_page = page_offset + off_idx * line_size
-                        extra_page = off_in_page // PAGE_SIZE_BYTES
-                        off_in_page = off_in_page % PAGE_SIZE_BYTES
-                        addr = ((start_page + pg + extra_page) * PAGE_SIZE_BYTES
-                                + off_in_page)
-                        actual = min(line_size, total_size - emitted * line_size)
-                        addr_list.append(addr)
-                        size_list.append(actual)
-                        type_list.append(rtype)
-                        emitted += 1
-                    if emitted >= n_lines:
-                        break
-            else:
-                # super-page: co-prime stride, preserve page offset
-                pages_per_line = line_size // PAGE_SIZE_BYTES
-                stride_pages = _cwdp_stride(pages_per_line)
-                for i in range(n_lines):
-                    addr = ((start_page + i * stride_pages) * PAGE_SIZE_BYTES
-                            + page_offset)
-                    actual = min(line_size, total_size - i * line_size)
-                    addr_list.append(addr)
-                    size_list.append(actual)
-                    type_list.append(rtype)
 
     return addr_list, size_list, type_list
 
@@ -435,10 +417,11 @@ def write_trace_file(
         <arrival_ns> <device_id> <lba> <sectors> <req_type>
     All requests arrive at T=0 (MemoryEngine has no concept of time).
 
-    device_id is assigned by CWDP channel so that MQSim's multi-queue
-    dispatch naturally interleaves commands across all available channels.
-    Lines are round-robin sorted by channel to prevent channel clustering
-    that would otherwise serialize the pipeline.
+    device_id is assigned by simple round-robin (``i % CHANNELS``).
+    MQSim's internal Plane Allocation Scheme (CWDP) already handles
+    the LPA → Channel mapping, so the trace layer does not need to
+    duplicate CWDP logic.  Consecutive trace lines naturally go to
+    different device queues, preventing channel clustering.
     """
     _require_loaded()
     addr_list, size_list, type_list = build_trace_lines(mem_req_list, cfg)
@@ -447,38 +430,18 @@ def write_trace_file(
     if d:
         os.makedirs(d, exist_ok=True)
 
-    # Compute CWDP channel for each line and group by channel
-    pages_per_cwdp_group = PLANES_PER_DIE * DIES_PER_CHIP * CHIPS_PER_CH
-    num_channels = CHANNELS
-
-    # Build (addr, size, req_type, channel) tuples
-    lines = []
-    for addr, size, req_type in zip(addr_list, size_list, type_list):
-        lba = addr // SECTOR_SIZE
-        page = lba // SECTORS_PER_PAGE
-        cwdp_chan = (page // pages_per_cwdp_group) % num_channels
-        lines.append((lba, size, req_type, cwdp_chan))
-
-    # Round-robin interleave: write one line per channel, then repeat.
-    # This ensures consecutive lines in the trace file go to different
-    # channels, maximising NAND pipeline utilization.
-    bucketed = {ch: [] for ch in range(num_channels)}
-    for l in lines:
-        bucketed[l[3]].append(l)
-
-    max_per_ch = max(len(b) for b in bucketed.values())
-
     total_bytes = 0
     line_count = 0
     with open(output_path, "w") as f:
-        for round_idx in range(max_per_ch):
-            for ch in range(num_channels):
-                if round_idx < len(bucketed[ch]):
-                    lba, size, req_type, cwdp_chan = bucketed[ch][round_idx]
-                    sectors = math.ceil(size / SECTOR_SIZE)
-                    f.write(f"0 {cwdp_chan} {lba} {sectors} {req_type}\n")
-                    total_bytes += size
-                    line_count += 1
+        for i, (addr, size, req_type) in enumerate(
+            zip(addr_list, size_list, type_list)
+        ):
+            lba = addr // SECTOR_SIZE
+            sectors = math.ceil(size / SECTOR_SIZE)
+            device_id = i % CHANNELS
+            f.write(f"0 {device_id} {lba} {sectors} {req_type}\n")
+            total_bytes += size
+            line_count += 1
 
     return total_bytes, line_count
 

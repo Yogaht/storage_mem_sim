@@ -218,15 +218,10 @@ class TestMemoryEngineWithMQSim(unittest.TestCase):
                 capacity=512.0,
                 ssd_config_path=os.path.abspath(ssd_config),
                 workload_config_path=os.path.abspath(workload_config),
+                merge_contiguous=True,
+                request_size_bytes=131072,
             ),
         ))
-        # Configure trace slicing to avoid over-slicing in these tests
-        from media.mqsim_wrapper.pymqsim import TraceSliceConfig
-        self.engine.media_system.trace_config = TraceSliceConfig(
-            merge_contiguous=True,
-            request_size=131072,
-            cwdp_aware=False,
-        )
 
     def test_sequential_read_metrics(self):
         """Sequential reads: bandwidth > 0, iops > 0, time > 0."""

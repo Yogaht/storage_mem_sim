@@ -64,7 +64,6 @@ class MQSimMediaSystem(BaseMediaSystem):
         self._trace_config = TraceSliceConfig(
             merge_contiguous=self.config.merge_contiguous,
             request_size=self.config.request_size_bytes,
-            cwdp_aware=self.config.cwdp_aware,
         )
 
         # ---- load NAND geometry from SSD config XML ----
