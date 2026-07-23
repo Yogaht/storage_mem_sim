@@ -14,7 +14,7 @@ from dataclasses import dataclass
 class MQSimResult:
     """Structured output from a single MQSim simulation run.
 
-    All latency values are in nanoseconds.  Bandwidth in bytes/second.
+    All latency values are in us.  Bandwidth in bytes/second.
     IOPS in operations/second.
     """
 

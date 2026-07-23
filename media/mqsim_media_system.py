@@ -175,7 +175,7 @@ class MQSimMediaSystem(BaseMediaSystem):
             num_write_requests=num_write,
             num_media_reqs=len(mem_req_list),
             time=total_time,
-            bandwidth=result.bandwidth_bytes_per_sec / (1024**3),
+            bandwidth=result.bandwidth_bytes_per_sec,
             iops=result.total_iops,
             iops_read=result.iops_read,
             iops_write=result.iops_write,

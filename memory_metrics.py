@@ -48,7 +48,6 @@ class MemoryEngineMetrics:
                                 across all DP ranks and instances.
         mem_metrics_list: History of per-request MemoryMetrics.
         bandwidth: Cumulative bandwidth = total_bytes / total_time (B/s).
-        iops: Cumulative IOPS = global_memory_reqs_num / total_time.
     """
     cycles: int = 0
     total_time: float = 0.0

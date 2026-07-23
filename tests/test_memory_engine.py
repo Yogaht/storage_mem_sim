@@ -243,7 +243,7 @@ class TestMemoryEngineWithMQSim(unittest.TestCase):
         self.assertGreater(metrics.bandwidth, 0, "Bandwidth should be > 0")
         self.assertGreater(metrics.iops, 0, "IOPS should be > 0")
         # bandwidth * time ≈ total_bytes (within ~30%)
-        computed_bytes = metrics.bandwidth *(1024**3) * metrics.total_time
+        computed_bytes = metrics.bandwidth * metrics.total_time
         ratio = computed_bytes / total_bytes
         self.assertAlmostEqual(ratio, 1.0, delta=0.3,
             msg=f"BW*time={computed_bytes:.0f} vs total={total_bytes}")
