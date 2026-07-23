@@ -1,7 +1,7 @@
 """Tests for RamulatorMediaSystem — cycle-accurate DRAM simulation backend.
 
 The Ramulator2 Python package must be built and on sys.path:
-    pip install -e media/ramulator_wrapper/ramulator2
+    pip install -e media/ramulator_wrapper
 """
 
 import unittest
@@ -24,13 +24,7 @@ from ..media import (
 
 _SETUP_MSG = (
     "Ramulator2 Python package is not installed. To install:\n"
-    "  git submodule update --init media/ramulator_wrapper/ramulator2\n"
-    "  pip install -e media/ramulator_wrapper/ramulator2\n"
-    "If the C++ extension has not been built:\n"
-    "  cmake -S media/ramulator_wrapper/ramulator2 -B media/ramulator_wrapper/ramulator2/build \\\n"
-    "    -DCMAKE_BUILD_TYPE=Release -DRAMULATOR_PYTHON_BINDINGS=ON -DCMAKE_CXX_COMPILER=g++-14\n"
-    "  cmake --build media/ramulator_wrapper/ramulator2/build -j$(sysctl -n hw.ncpu)\n"
-    "  pip install -e media/ramulator_wrapper/ramulator2\n"
+    "  pip install -e media/ramulator_wrapper\n"
 )
 _ramulator_available = False
 try:
@@ -174,6 +168,221 @@ class TestRamulatorMediaSystemFull(unittest.TestCase):
         self.assertEqual(metrics.num_read_requests, 16)
         self.assertGreater(metrics.cycles, 0)
         self.assertGreater(metrics.time, 0)
+
+
+class TestRamulatorTimeConversion(unittest.TestCase):
+    """Verify Fix 1: tick_ps from serialized to_config(), time = cycles * tick_ps * 1e-12."""
+
+    def setUp(self):
+        from ..media.media_config import MediaConfig
+        from ..media.media_backend import MediaSystemBackend
+        self.system = _make_ramulator()
+        self.fallback_config = MediaConfig(
+            media_type=MediaSystemBackend.RAMULATOR,
+        )
+
+    def test_tick_ps_is_positive_integer(self):
+        """Serialized tCK_ps from to_config() must be a positive integer."""
+        self.assertIsInstance(self.system._tick_ps, int)
+        self.assertGreater(self.system._tick_ps, 0)
+
+    def test_io_frequency_mhz_derived_from_tick_ps(self):
+        """_io_frequency_mhz is derived as 1e6 / _tick_ps (display-only)."""
+        expected = 1e6 / self.system._tick_ps
+        self.assertAlmostEqual(self.system._io_frequency_mhz, expected, places=0)
+
+    def test_time_from_cycles_and_tick_ps(self):
+        """time = cycles * _tick_ps * 1e-12."""
+        g = self.system._tx_bytes
+        req = self._make_request(0, g, MemoryRequestType.KREAD)
+        metrics = self.system.handler_mem_request([req])
+        expected_time = metrics.cycles * self.system._tick_ps * 1e-12
+        self.assertAlmostEqual(metrics.time, expected_time, places=12)
+
+    def test_hbm3_tick_ps_uses_serialized_value(self):
+        """HBM3_6400Mbps: tCK_ps=625 preset, tick_multiplier=2 → 312 ps/tick."""
+        import os, tempfile, yaml
+        # Minimal config to verify HBM3 serialized tick_ps
+        yaml_text = """\
+MemorySystem:
+  impl: GenericDRAM
+  clock_ratio: 1
+  ChannelMapper:
+    impl: CacheLineInterleave
+  DRAM:
+    impl: HBM3
+    org:
+      preset: HBM3_32Gb_8hi
+    timing:
+      preset: HBM3_6400Mbps
+  Controllers:
+    - impl: HBM34
+      Scheduler: {impl: FRFCFS}
+      RowPolicy: {impl: Open}
+      AddrMapper: {impl: RoBaRaCoCh}
+      RefreshManager: {impl: NoRefresh}
+"""
+        tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False)
+        tmp.write(yaml_text)
+        tmp.close()
+        try:
+            from ..media.media_config import MediaConfig
+            from ..media.media_backend import MediaSystemBackend
+            from ..media.ramulator_media_system import RamulatorMediaSystem
+            config = MediaConfig(
+                media_type=MediaSystemBackend.RAMULATOR,
+                config_path=tmp.name,
+            )
+            sys_ = RamulatorMediaSystem(config)
+            self.assertEqual(sys_._tick_ps, 312,
+                             f"HBM3_6400Mbps should serialize to 312 ps/tick (625//2), got {sys_._tick_ps}")
+        finally:
+            os.unlink(tmp.name)
+
+    def _make_request(self, addr, size, req_type):
+        from ..memory_object import MemoryObject
+        from ..memory_request import MemoryRequest
+        from ..memory_config import MemoryEngineConfig
+        obj = MemoryObject(addr, size, req_type, MemoryEngineConfig())
+        return MemoryRequest(memory_object=obj)
+
+
+class TestCreateComponentParams(unittest.TestCase):
+    """Verify Fix 4: _create_component forwards kwargs, rejects unknowns."""
+
+    def setUp(self):
+        try:
+            import ramulator  # noqa: F401
+        except ImportError:
+            raise unittest.SkipTest(_SETUP_MSG)
+
+    def test_forward_interleave_bits(self):
+        from ..media.ramulator_media_system import _create_component
+        import ramulator
+        cm = _create_component(ramulator.channel_mapper,
+                               {"impl": "CacheLineInterleave", "interleave_bits": 5},
+                               "CacheLineInterleave")
+        self.assertEqual(cm.interleave_bits, 5)
+
+    def test_default_when_no_params(self):
+        from ..media.ramulator_media_system import _create_component
+        import ramulator
+        cm = _create_component(ramulator.channel_mapper, {}, "CacheLineInterleave")
+        self.assertEqual(cm.interleave_bits, 0)
+
+    def test_bad_impl_raises_valueerror(self):
+        from ..media.ramulator_media_system import _create_component
+        import ramulator
+        with self.assertRaises(ValueError) as ctx:
+            _create_component(ramulator.channel_mapper, {"impl": "NoSuchThing"}, "CacheLineInterleave")
+        self.assertIn("NoSuchThing", str(ctx.exception))
+
+    def test_unknown_param_raises_valueerror(self):
+        from ..media.ramulator_media_system import _create_component
+        import ramulator
+        with self.assertRaises(ValueError) as ctx:
+            _create_component(ramulator.channel_mapper,
+                              {"impl": "CacheLineInterleave", "typo_param": 42},
+                              "CacheLineInterleave")
+        self.assertIn("typo_param", str(ctx.exception))
+
+
+class TestControllerParamForwarding(unittest.TestCase):
+    """Verify Fix 4: controller-level params forwarded to ctrl_cls()."""
+
+    def setUp(self):
+        try:
+            import ramulator  # noqa: F401
+        except ImportError:
+            raise unittest.SkipTest(_SETUP_MSG)
+
+    def test_controller_buffer_size_reaches_component(self):
+        """read_buffer_size from YAML reaches the constructed controller."""
+        import yaml, ramulator, tempfile, os
+        from ..media.ramulator_media_system import (
+            _build_dram, _find_dram, _expand_controller_configs, _create_component,
+        )
+        yaml_text = """\
+MemorySystem:
+  impl: GenericDRAM
+  clock_ratio: 1
+  ChannelMapper: {impl: CacheLineInterleave}
+  DRAM: {impl: DDR5, org: {preset: DDR5_16Gb_x8}, timing: {preset: DDR5_4800AN}}
+  Controllers:
+    - impl: GenericDDR
+      read_buffer_size: 64
+      write_buffer_size: 64
+      Scheduler: {impl: FRFCFS}
+      RowPolicy: {impl: Open}
+      AddrMapper: {impl: RoBaRaCoCh}
+      RefreshManager: {impl: NoRefresh}
+"""
+        cfg = yaml.safe_load(yaml_text)
+        ms = cfg["MemorySystem"]
+        dram = _build_dram(_find_dram(cfg))
+        ctrl_list = _expand_controller_configs(ms.get("Controllers"))
+        c_cfg = ctrl_list[0]
+
+        sched = _create_component(ramulator.scheduler, c_cfg.get("Scheduler", {}), "FRFCFS")
+        rp = _create_component(ramulator.row_policy, c_cfg.get("RowPolicy", {}), "Open")
+        am = _create_component(ramulator.addr_mapper, c_cfg.get("AddrMapper", {}), "RoBaRaCoCh")
+        rm = _create_component(ramulator.refresh_manager, c_cfg.get("RefreshManager", {}), "NoRefresh")
+
+        controller_params = {
+            k: v for k, v in c_cfg.items()
+            if k not in {"impl", "count", "DRAM", "Scheduler", "RowPolicy",
+                         "AddrMapper", "RefreshManager"}
+        }
+        ctrl_cls = getattr(ramulator.controller, c_cfg["impl"])
+        ctrl = ctrl_cls(dram=dram, scheduler=sched, row_policy=rp,
+                        addr_mapper=am, refresh_manager=rm, **controller_params)
+        self.assertEqual(ctrl.read_buffer_size, 64,
+                         f"Expected 64, got {ctrl.read_buffer_size}")
+        self.assertEqual(ctrl.write_buffer_size, 64,
+                         f"Expected 64, got {ctrl.write_buffer_size}")
+
+    def test_unknown_controller_param_raises_in_handler(self):
+        """Unknown controller param raises via the real handler_mem_request path."""
+        import tempfile, os
+        yaml_text = """\
+MemorySystem:
+  impl: GenericDRAM
+  clock_ratio: 1
+  ChannelMapper: {impl: CacheLineInterleave}
+  DRAM: {impl: DDR5, org: {preset: DDR5_16Gb_x8}, timing: {preset: DDR5_4800AN}}
+  Controllers:
+    - impl: GenericDDR
+      bad_ctrl_param: 999
+      Scheduler: {impl: FRFCFS}
+      RowPolicy: {impl: Open}
+      AddrMapper: {impl: RoBaRaCoCh}
+      RefreshManager: {impl: NoRefresh}
+"""
+        tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False)
+        tmp.write(yaml_text)
+        tmp.close()
+        try:
+            from ..media.media_config import MediaConfig
+            from ..media.media_backend import MediaSystemBackend
+            from ..media.ramulator_media_system import RamulatorMediaSystem
+            from ..memory_object import MemoryObject
+            from ..memory_request import MemoryRequest
+            from ..memory_config import MemoryEngineConfig
+
+            config = MediaConfig(
+                media_type=MediaSystemBackend.RAMULATOR,
+                config_path=tmp.name,
+            )
+            sys_ = RamulatorMediaSystem(config)
+            mem_config = MemoryEngineConfig()
+            obj = MemoryObject(0, sys_._tx_bytes, MemoryRequestType.KREAD, mem_config)
+            req = MemoryRequest(memory_object=obj)
+
+            with self.assertRaises(ValueError) as ctx:
+                sys_.handler_mem_request([req])
+            self.assertIn("bad_ctrl_param", str(ctx.exception))
+        finally:
+            os.unlink(tmp.name)
 
 
 if __name__ == "__main__":

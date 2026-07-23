@@ -1,8 +1,26 @@
 # Ascend A2-class HBM approximation.
-# 64 GB HBM2e-like tier:
-#   capacity:  64 effective channels * 1 GB/channel = 64 GB
-#   bandwidth: 64 effective channels * 64 bit / 8 * 3200e6
-#              = 1638.4 GB/s peak.
+# 64 effective channels, 1 pseudo-channel per controller:
+#   capacity:  64 channels * 1 GB/pseudo-channel = 64 GB
+#   bandwidth: 64 channels * 64 bit / 8 * 3200e6 = 1638.4 GB/s peak
+#
+# Timing model: HBM2e-3200 approximation.
+# Primary timings (nCL, nRCD, etc.) are scaled from HBM2_2400Mbps preset
+#   to maintain similar absolute delays at 625 ps tCK:
+#     new_CK = ceil(old_CK × 833 / 625)
+# Secondary timings (nRRD, nFAW, nRFC, etc.) are computed from their
+#   JEDEC absolute-time constraints using the new 625 ps tCK.
+#
+# ⚠ Caveats:
+#  - This is an *approximate* HBM2e-3200 model — not a JEDEC-verified
+#    speed grade. Real HBM2e-3200 CK counts may differ.
+#  - count=64 pseudochannel=1 models each pseudo channel as an independent
+#    controller. This gives correct bandwidth but does not capture the
+#    single-CA-bus serialisation of two pseudo channels sharing one physical
+#    channel. For peak-bandwidth experiments with two-PC interleaving, use
+#    count=32 pseudochannel=2 + MOP4CLXOR addr mapper instead.
+#  - All secondary timings are listed explicitly to bypass Ramulator2's
+#    resolve() ordering: secondary timings are computed from tCK_ps
+#    *before* overrides are applied.
 #
 # Ramulator2 HBM12 keeps PseudoChannel as an internal DRAM hierarchy level
 # rather than an independent external controller. Use pseudochannel=1 and
@@ -19,8 +37,34 @@ MemorySystem:
       pseudochannel: 1
     timing:
       preset: HBM2_2400Mbps
+      # --- Overrides for HBM2e-3200 approximation ---
       rate: 3200
       tCK_ps: 625
+
+      # Primary timings — scaled from HBM2_2400Mbps CK counts.
+      # (nBL=2 and nCCDS=2 are architectural constants; kept at preset values.)
+      nCL: 23
+      nRCDRD: 23
+      nRCDWR: 19
+      nRP: 23
+      nRAS: 54
+      nRC: 77  # nRAS + nRP = 54 + 23
+      nWR: 26
+      nRTPL: 8
+      nCWL: 8
+      nCCDL: 4
+      nWTRS: 11
+      nWTRL: 14
+
+      # Secondary timings — absolute-time constraints ÷ 625 ps tCK.
+      nRRDS: 7       # tRRDS   = 4 ns
+      nRRDL: 7       # tRRDL   = 4 ns
+      nFAW: 24       # tFAW    = 15 ns
+      nRFC: 560      # tRFC    = 350 ns (density ≤ 8 Gb)
+      nRFCpb: 256    # tRFCSB  = 160 ns (density ≤ 8 Gb)
+      nRREFD: 13     # tRREFD  = 8 ns
+      nREFI: 6240    # tREFI   = 3.9 μs
+      nREFIpb: 390   # tREFISB = 3.9 μs / 16 banks
   Controllers:
     - impl: HBM12
       count: 64

@@ -1,12 +1,36 @@
 # Ascend A5-class / 950DT-like HBM approximation.
-# 96 GB / 4 TB/s HBM3e-like tier, modeled as 4 HBM stacks:
-#   stack organization: 4 stacks * 16 channels/stack = 64 channels
-#   bandwidth: 64 channels * 2 pseudochannels/channel * 32 bit / 8
-#              * 8000Mbps = 4096.0 GB/s peak.
+# 96 GB user-visible / 128 GB internal, 4 TB/s HBM3e-like tier.
 #
-# Note: MemEngine JSON declares the user-visible capacity as 96 GB. The
-# Ramulator HBM3_32Gb_8hi org is the closest built-in topology for HBM3e-like
-# bandwidth modeling, but corresponds to 128 GB at 64 channels.
+#   User-visible capacity: 96 GB  (set in MediaConfig.capacity)
+#   Internal organisation:  128 GB (64ch × 2 pseudo-ch × 32Gb; HBM3_32Gb_8hi preset)
+#   Bandwidth: 64ch × 2 pseudo-ch × 32 bit / 8 × 8000e6 = 4096.0 GB/s peak
+#
+# Timing model: HBM3e-8000 approximation.
+# All CK-based timing values are scaled from the HBM3_6400Mbps preset:
+#     new_CK = ceil(old_CK × 625 / 500)
+# This is an *approximate* model — not a JEDEC-verified HBM3e speed grade.
+# tCK_ps=500 is the pre-scaling (CA CK) value; Ramulator2's to_config()
+# divides by tick_multiplier=2, yielding 250 ps per simulator tick.
+#
+# ---- Addr-mapper and bandwidth notes ----
+# This config uses count=64 controllers, each with pseudochannel=2.
+# Ramulator2 HBM34Controller issues (at most) one column command per CK
+# on the rising edge only.  Two pseudo channels sharing one controller
+# compete for that single column-command slot, but can interleave across
+# CK cycles: PC0 on CK 0, PC1 on CK 1, PC0 on CK 2, etc.
+#
+#   * With RoBaRaCoCh (row/bank/col/PC mapping): consecutive addresses fill
+#     ~32 transactions on the same PC before switching.  Continuous-read
+#     bandwidth saturates near ~2 TB/s because the two PCs do not alternate
+#     at the transaction level.
+#   * With MOP4CLXOR (deterministic XOR hash, 4-CL granularity): 2 low
+#     Column bits are kept for 4-transaction bursts; PC, SID, BankGroup,
+#     and Bank are hashed with Column bit XOR.  Channel is NOT hashed —
+#     CacheLineInterleave already distributes channels.  With the current
+#     timing overrides, measured continuous-read bandwidth ≈ 3456 GB/s
+#     (~84 % of peak).
+#
+# For row-locality-sensitive workloads use RoBaRaCoCh but expect ~2 TB/s.
 MemorySystem:
   impl: GenericDRAM
   clock_ratio: 1
@@ -18,8 +42,56 @@ MemorySystem:
       preset: HBM3_32Gb_8hi
     timing:
       preset: HBM3_6400Mbps
+      # --- Overrides for HBM3e-8000 approximation ---
       rate: 8000
-      tCK_ps: 250
+      tCK_ps: 500          # CA CK period; to_config() → 250 ps/tick
+
+      # Primary timings — scaled ceil(old_CK × 625/500)
+      nCL: 25
+      nRCDRD: 39
+      nRCDWR: 19
+      nRP: 33
+      nRAS: 57
+      nRC: 90
+      nWR: 42
+      nRTP: 12
+      nCWL: 13
+      nCCDL: 5
+      nCCDR: 4
+      nWTRS: 9
+      nWTRL: 13
+      nRTW: 25
+
+      # Secondary timings — scaled from HBM3_6400Mbps preset
+      nRRDS: 5
+      nRRDL: 7
+      nFAW: 30
+      nREFI: 7800
+
+      # ---- Refresh / RFM (currently masked by NoRefresh) ----
+      # All values derived from Ramulator2's internal formulas with tCK=500 ps.
+      # tRFC ≈ 450 ns for 32 Gb die density (16 Gb channel density = 32 Gb / 2 SID)
+      # → ceil(450e3 / 500) = 900 CK.
+      nRFC: 900
+      # tRFCSB = 200 ns → ceil(200e3 / 500) = 400 CK.
+      nRFCpb: 400
+      # tRREFD = 8 ns → ceil(8e3 / 500) = 16 CK.
+      nRREFD: 16
+
+      # Per-bank refresh: tREFI 3.9 μs / (SID × BG × Bank)。
+      # HBM3_32Gb_8hi org → 2 sid × 4 bg × 4 bank = 32 slices.
+      # ceil(3.9e6 / 32 / 500) = 244 CK.
+      nREFIpb: 244
+
+      # RFM all-bank: same absolute window as nRFC.
+      nRFMab: 900
+      # RFM per-bank: same absolute window as nRFCpb.
+      nRFMpb: 400
+
+      # Architectural constants (unchanged from preset)
+      nBL: 2
+      nCCDS: 2
+      nPPD: 2
   Controllers:
     - impl: HBM34
       count: 64
@@ -28,6 +100,6 @@ MemorySystem:
       RowPolicy:
         impl: Open
       AddrMapper:
-        impl: RoBaRaCoCh
+        impl: MOP4CLXOR
       RefreshManager:
         impl: NoRefresh

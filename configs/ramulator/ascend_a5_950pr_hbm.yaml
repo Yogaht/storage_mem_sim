@@ -24,6 +24,6 @@ MemorySystem:
       RowPolicy:
         impl: Open
       AddrMapper:
-        impl: RoBaRaCoCh
+        impl: MOP4CLXOR
       RefreshManager:
         impl: NoRefresh

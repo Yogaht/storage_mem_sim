@@ -84,7 +84,7 @@ def main():
     print(f"Backend:    {media_type}")
     if media_type == "ramulator":
         io_freq = getattr(ms, '_io_frequency_mhz', None)
-        print(f"IO freq:    {io_freq} MHz  |  tx_bytes: {tx_bytes}")
+        print(f"Tick freq:  {io_freq} MHz  |  tx_bytes: {tx_bytes}")
         if mc.get("config"):
             print(f"YAML:       {mc['config']}")
     elif media_type == "mqsim":
@@ -118,7 +118,8 @@ def main():
 
     # ---- results ----
     print(f"Requests:  {num_requests} × {request_size}B → "
-          f"{metrics.memory_reqs_num} media reqs")
+          f"{metrics.memory_reqs_num} memory reqs "
+          f"(global: {metrics.global_memory_reqs_num})")
     if backend == MediaSystemBackend.RAMULATOR:
         print(f"Cycles:    {metrics.cycles}")
     print(f"Time:      {metrics.total_time * 1e9:.1f} ns")

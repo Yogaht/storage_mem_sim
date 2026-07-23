@@ -91,7 +91,8 @@ class RamulatorMediaSystem(BaseMediaSystem):
     def __init__(self, config: MediaConfig):
         super().__init__(config)
         self._tx_bytes = config.granularity  # fallback
-        self._io_frequency_mhz: float = 0.0  # auto-derived
+        self._tick_ps: int = 0  # ps per simulator tick, from serialized to_config()
+        self._io_frequency_mhz: float = 0.0  # derived for display
         self._yaml_text = FALLBACK_YAML
         self._init_ramulator()
 
@@ -103,12 +104,7 @@ class RamulatorMediaSystem(BaseMediaSystem):
         except ImportError as e:
             raise ImportError(
                 "ramulator Python package is not installed. To install:\n"
-                "  git submodule update --init media/ramulator_wrapper/ramulator2\n"
-                "  pip install -e media/ramulator_wrapper/ramulator2\n"
-                "If the C++ extension has not been built, build it first:\n"
-                "  cmake -S media/ramulator_wrapper/ramulator2 -B media/ramulator_wrapper/ramulator2/build \\\n"
-                "    -DCMAKE_BUILD_TYPE=Release -DRAMULATOR_PYTHON_BINDINGS=ON -DCMAKE_CXX_COMPILER=g++-14\n"
-                "  cmake --build media/ramulator_wrapper/ramulator2/build -j$(sysctl -n hw.ncpu)"
+                "  pip install -e media/ramulator_wrapper"
             ) from e
 
         if self.config.config_path:
@@ -125,17 +121,20 @@ class RamulatorMediaSystem(BaseMediaSystem):
         # tx_bytes via Ramulator2's C++ formula:
         #   get_tx_bytes() = internal_prefetch_size * channel_width / 8
         dram = _build_dram(dram_cfg)
-        org, timing = dram.resolve()
+        org, _ = dram.resolve()
         self._tx_bytes = dram.internal_prefetch_size * org["channel_width"] // 8
 
-        # Auto-derive cycle frequency from DRAM spec.
-        # cycle_frequency_mhz = rate / 2 * tick_multiplier
-        #   rate: data rate in MT/s or Mbps (e.g., DDR5-4800 → 4800)
-        #   tick_multiplier: ticks per tCK (1 for DDR, 2 for HBM3 half-CK)
-        self._io_frequency_mhz = timing["rate"] / 2 * dram.tick_multiplier
+        # Use the serialized tCK_ps that Ramulator2 actually sends to C++.
+        # to_config() applies tick_multiplier scaling (e.g. HBM3 tCK_ps //= 2),
+        # so this is the exact m_tCK_ps value C++ uses in:
+        #   time_ps = m_measured_clk * m_tCK_ps
+        dram_config = dram.to_config()
+        tck_index = dram.timing_params.index("tCK_ps")
+        self._tick_ps = dram_config["timing"][tck_index]  # ps per simulator tick
+        self._io_frequency_mhz = 1e6 / self._tick_ps  # derived for display
 
-        logger.info("Ramulator2 ready (tx_bytes=%d, cycle_freq=%.0f MHz).",
-                    self._tx_bytes, self._io_frequency_mhz)
+        logger.info("Ramulator2 ready (tx_bytes=%d, tick_ps=%d, tick_freq=%.0f MHz).",
+                    self._tx_bytes, self._tick_ps, self._io_frequency_mhz)
 
     # ------------------------------------------------------------------
     # Media request decomposition
@@ -191,7 +190,7 @@ class RamulatorMediaSystem(BaseMediaSystem):
             num_other_requests=0,
             cycles=cycles,
             num_media_reqs=len(media_reqs),
-            time=cycles / (self._io_frequency_mhz * 1e6) if self._io_frequency_mhz > 0 else 0.0,
+            time=cycles * self._tick_ps * 1e-12,
         )
         self.system_metrics.update_from_media(metrics)
         return metrics
@@ -221,7 +220,14 @@ class RamulatorMediaSystem(BaseMediaSystem):
                 ms.get("Controllers") or ms.get("Controller")
             )
             for c_cfg in ctrl_list:
-                ctrl_cls = getattr(ramulator.controller, c_cfg.get("impl", "GenericDDR"))
+                ctrl_cls_name = c_cfg.get("impl", "GenericDDR")
+                try:
+                    ctrl_cls = getattr(ramulator.controller, ctrl_cls_name)
+                except AttributeError:
+                    raise ValueError(
+                        f"Unknown controller {ctrl_cls_name!r} — available: "
+                        f"{sorted(d for d in dir(ramulator.controller) if not d.startswith('_'))}"
+                    ) from None
 
                 # Resolve sub-component classes from YAML or use defaults
                 sched = _create_component(ramulator.scheduler, c_cfg.get("Scheduler", {}), "FRFCFS")
@@ -229,9 +235,20 @@ class RamulatorMediaSystem(BaseMediaSystem):
                 am = _create_component(ramulator.addr_mapper, c_cfg.get("AddrMapper", {}), "RoBaRaCoCh")
                 rm = _create_component(ramulator.refresh_manager, c_cfg.get("RefreshManager", {}), "NoRefresh")
 
+                # Forward remaining controller-level params (buffer sizes, watermarks, etc.)
+                controller_params = {
+                    k: v for k, v in c_cfg.items()
+                    if k not in {
+                        "impl", "count",
+                        "DRAM", "Scheduler", "RowPolicy",
+                        "AddrMapper", "RefreshManager",
+                    }
+                }
+
                 controllers.append(ctrl_cls(
                     dram=dram, scheduler=sched, row_policy=rp,
                     addr_mapper=am, refresh_manager=rm,
+                    **controller_params,
                 ))
 
             # --- ChannelMapper ---
@@ -276,10 +293,21 @@ class RamulatorMediaSystem(BaseMediaSystem):
 def _create_component(module, cfg: dict, default_impl: str):
     """Create a Ramulator2 component from a config dict.
 
+    All keys except ``impl`` are forwarded as constructor kwargs.
+    Unknown parameters are rejected by Ramulator2's Component base.
+
     Example: _create_component(ramulator.scheduler, {"impl": "FRFCFS"}, "FRFCFS")
     """
-    cls = getattr(module, cfg.get("impl", default_impl))
-    return cls()
+    cfg = dict(cfg or {})
+    impl = cfg.pop("impl", default_impl)
+    try:
+        cls = getattr(module, impl)
+    except AttributeError:
+        raise ValueError(
+            f"Unknown {impl!r} — available: "
+            f"{sorted(d for d in dir(module) if not d.startswith('_'))}"
+        ) from None
+    return cls(**cfg)
 
 
 def _expand_controller_configs(ctrl_cfg):
