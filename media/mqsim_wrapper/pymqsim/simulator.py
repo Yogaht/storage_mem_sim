@@ -88,14 +88,6 @@ def run_simulation(
     if hasattr(native, 'run_with_stats'):
         stats = native.run_with_stats(
             ssd_local, workload_xml_path, output_dir)
-        logger.info(
-            "MQSim flow: generated=%s serviced=%s "
-            "dev_resp=%s us e2e=%s us",
-            stats.get("generated_request_count", "?"),
-            stats.get("serviced_request_count", "?"),
-            stats.get("device_respouse_time_us", "?"),
-            stats.get("end_to_end_request_delay_us", "?"),
-        )
         ok = stats is not None and stats
     else:
         ok = native.run(ssd_local, workload_xml_path, output_dir)
