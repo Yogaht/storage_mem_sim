@@ -215,8 +215,10 @@ def theory_iops(request_size_bytes: int) -> float:
     2. NAND plane array (pure page-read parallelism limit):
           iops_nand = TOTAL_PLANES × 1e9 / (pages_per_io × tR)
 
-    3. CWDP pipeline (combined NAND tR + channel command serialization):
-          PipeCycle = tR + CHANNELS × (CMD + Setup + DataOut)
+    3. CWDP pipeline (channels operate in parallel; each channel
+       serializes commands to its own dies):
+          dies_per_ch = CHIPS_PER_CH × DIES_PER_CHIP
+          PipeCycle = max(tR, dies_per_ch × BusTime)
           iops_cwdp = TOTAL_DIES × 1e9 / PipeCycle
 
     4. Host PCIe bandwidth (if loaded from ssdconfig.xml):
@@ -238,10 +240,11 @@ def theory_iops(request_size_bytes: int) -> float:
     # Bound 2 — pure NAND plane parallelism
     iops_nand = TOTAL_PLANES / (pages_per_io * NAND_tR_NS * 1e-9)
 
-    # Bound 3 — CWDP pipeline (NAND + command + data serialization)
+    # Bound 3 — CWDP pipeline (channels parallel, dies per ch serial on bus)
+    dies_per_ch = CHIPS_PER_CH * DIES_PER_CHIP
     data_out_ns = (request_size_bytes / 2.0) * (2000.0 / CHANNEL_BW_MBPS)
     bus_time_ns = CMD_TRANSFER_NS + DATA_SETUP_NS + data_out_ns
-    pipeline_cycle_ns = NAND_tR_NS + CHANNELS * bus_time_ns
+    pipeline_cycle_ns = max(NAND_tR_NS, dies_per_ch * bus_time_ns)
     iops_cwdp = TOTAL_DIES * 1e9 / pipeline_cycle_ns
 
     # Bound 4 — host PCIe bandwidth
@@ -435,10 +438,10 @@ def write_trace_file(
     All requests arrive at T=0 (MemoryEngine has no concept of time).
 
     device_id is assigned by simple round-robin (``i % CHANNELS``).
-    MQSim's internal Plane Allocation Scheme (CWDP) already handles
-    the LPA → Channel mapping, so the trace layer does not need to
-    duplicate CWDP logic.  Consecutive trace lines naturally go to
-    different device queues, preventing channel clustering.
+    MQSim defines but does not read this column for physical NAND
+    channel mapping — CWDP address mapping (LPA → Channel) is handled
+    internally by MQSim's FTL.  The device_id column exists only for
+    NVMe multi-queue compatibility.
     """
     _require_loaded()
     addr_list, size_list, type_list = build_trace_lines(mem_req_list, cfg)

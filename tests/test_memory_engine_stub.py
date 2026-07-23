@@ -110,8 +110,8 @@ class TestMultiInstanceDistribution(unittest.TestCase):
         self.assertEqual(metrics.global_memory_reqs_num, 0)
         self.assertEqual(len(fake.calls), 0)
 
-    def test_avg_bandwidth_uses_simulated_bytes(self):
-        """avg_bandwidth = simulated_bytes / simulated_time."""
+    def test_bandwidth_uses_simulated_bytes(self):
+        """bandwidth = simulated_bytes / simulated_time."""
         engine, fake = self._make_engine(dp_size=2, instance_num=2)
 
         # 2 user reqs × size=100 × dp=2 = 4 engine reqs, round-robin:
