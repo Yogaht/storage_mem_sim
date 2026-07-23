@@ -88,7 +88,7 @@ def run_simulation(
     if hasattr(native, 'run_with_stats'):
         stats = native.run_with_stats(
             ssd_local, workload_xml_path, output_dir)
-        ok = stats is not None and stats
+        ok = stats is not None
     else:
         ok = native.run(ssd_local, workload_xml_path, output_dir)
 
@@ -98,8 +98,9 @@ def run_simulation(
     # Parse output XML
     output_xml = _find_output_xml(output_dir)
     if output_xml is None:
-        logger.warning("No workload_scenario_N.xml in %s", output_dir)
-        return MQSimResult()
+        raise RuntimeError(
+            f"MQSim completed without a workload result XML in {output_dir}"
+        )
 
     print(f"[MQSim] result file: {os.path.abspath(output_xml)}")
     return parse_mqsim_output(output_xml)

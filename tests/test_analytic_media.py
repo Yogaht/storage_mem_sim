@@ -121,6 +121,35 @@ class TestAnalyticMediaSystem(unittest.TestCase):
         # Double bandwidth → half time
         self.assertAlmostEqual(m_100.time, 2 * m_200.time, places=3)
 
+    def test_backend_rates_are_populated(self):
+        """Analytic metrics expose media bandwidth and request rate."""
+        reqs = [
+            self._make_memory_request(0, 64, MemoryRequestType.KREAD),
+            self._make_memory_request(64, 64, MemoryRequestType.KWRITE),
+        ]
+        metrics = self.system.handler_mem_request(reqs)
+        self.assertEqual(metrics.bandwidth, 100.0 * 1024**3)
+        self.assertAlmostEqual(metrics.iops, 2 / metrics.time)
+        self.assertAlmostEqual(metrics.iops_read, 1 / metrics.time)
+        self.assertAlmostEqual(metrics.iops_write, 1 / metrics.time)
+
+    def test_media_metrics_add_time_weights_rates(self):
+        """Adding batches preserves rate fields instead of dropping them."""
+        left = MediaMetrics(
+            time=1.0, bandwidth=100.0, iops=10.0,
+            iops_read=8.0, iops_write=2.0,
+        )
+        right = MediaMetrics(
+            time=3.0, bandwidth=300.0, iops=30.0,
+            iops_read=12.0, iops_write=18.0,
+        )
+        combined = left + right
+        self.assertEqual(combined.time, 4.0)
+        self.assertEqual(combined.bandwidth, 250.0)
+        self.assertEqual(combined.iops, 25.0)
+        self.assertEqual(combined.iops_read, 11.0)
+        self.assertEqual(combined.iops_write, 14.0)
+
 
 if __name__ == "__main__":
     unittest.main()

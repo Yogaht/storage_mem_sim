@@ -181,9 +181,8 @@ python -m pip install -e media/mqsim_wrapper
 - `docs/design.md`：较详细的架构背景；可能落后于实现，使用时与本文件和源码核对。
 - `docs/ramulator_config.md`：Ramulator 配置说明。
 - `docs/MQSim后端说明.md`：MQSim 后端总览。
-- `docs/MQSim_trace说明.md`、`docs/MQSim_CWDP说明.md`、`docs/MQSim_xml说明.md`：trace、地址布局和 XML 专题。
+- `docs/trace_generation_analysis.md`、`docs/MQSim_xml说明.md`：trace 生成、地址转换和 XML 专题。
 - `docs/mqsim_ssd_guide.md`：SSD 配置与分析指南。
-- `docs/hbf_mqsim_implementation_plan.md`：HBF/MQSim 方案记录；它是计划/设计材料，不代表所有内容已实现。
 
 ## 修改完成前检查
 
@@ -193,4 +192,3 @@ python -m pip install -e media/mqsim_wrapper
 4. 是否覆盖正常、空输入、边界、未对齐和无效配置？
 5. 高精度后端测试是真正运行还是因依赖缺失跳过？
 6. README、配置示例、设计文档和本文件是否需要同步？
-

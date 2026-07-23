@@ -126,7 +126,7 @@
 
 ```
 输入: [R@0,4096], [W@4096,4096]
-→ merge_sequential: 按类型分组，reads 先于 writes
+→ merge_sequential: 保持输入顺序
 → 不合并（类型不同）
 → 2 lines: type=[1,0]
 ```

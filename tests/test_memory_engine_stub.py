@@ -122,7 +122,7 @@ class TestMultiInstanceDistribution(unittest.TestCase):
         )
         em = engine.get_engine_metrics()
         expected_bw = 200.0 / 2e-9
-        self.assertAlmostEqual(em.avg_bandwidth, expected_bw, places=0)
+        self.assertAlmostEqual(em.bandwidth, expected_bw, places=0)
 
     def test_memory_reqs_num_simulated_instance(self):
         """memory_reqs_num = requests in simulated instance."""

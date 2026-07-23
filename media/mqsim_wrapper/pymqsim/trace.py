@@ -112,6 +112,9 @@ def load_from_ssdconfig_xml(xml_path: str) -> Dict[str, int]:
 
     Returns a dict ``{name: value}`` of all loaded values.
     """
+    global _loaded
+    _loaded = False
+
     if not os.path.isfile(xml_path):
         raise FileNotFoundError(f"SSD config not found: {xml_path}")
 
@@ -164,6 +167,26 @@ def load_from_ssdconfig_xml(xml_path: str) -> Dict[str, int]:
         raise ValueError(
             f"SSD config missing required tags: {missing}\n"
             f"File: {xml_path}"
+        )
+
+    non_positive = [
+        name for name in _GEOMETRY_NAMES
+        if isinstance(loaded[name], (int, float)) and loaded[name] <= 0
+    ]
+    if non_positive:
+        raise ValueError(
+            f"SSD config values must be > 0: {non_positive}\n"
+            f"File: {xml_path}"
+        )
+
+    # MQSim converts the channel rate to an integer clock period with
+    # ``(sim_time_type)(1000.0 / rate) * 2``.  Above 1000 MB/s the cast
+    # becomes zero and the simulator no longer advances channel time.
+    if loaded['CHANNEL_BW_MBPS'] > 1000:
+        raise ValueError(
+            "Channel_Transfer_Rate must be <= 1000 MB/s for MQSim's "
+            "integer-nanosecond timing model; "
+            f"got {loaded['CHANNEL_BW_MBPS']} in {xml_path}"
         )
 
     _recompute_derived()
@@ -232,6 +255,10 @@ def theory_iops(request_size_bytes: int) -> float:
     are present in the loaded ssdconfig.xml.
     """
     _require_loaded()
+    if request_size_bytes <= 0:
+        raise ValueError(
+            f"request_size_bytes must be > 0, got {request_size_bytes}"
+        )
     pages_per_io = max(1, math.ceil(request_size_bytes / PAGE_SIZE_BYTES))
 
     # Bound 1 — pure channel bus bandwidth
@@ -264,16 +291,21 @@ def theory_bandwidth_mbps(request_size_bytes: int) -> float:
 
 
 def theory_bus_utilization(request_size_bytes: int) -> float:
-    """Bus utilization U(S) = variable / (fixed + variable).
+    """Channel data-bus utilization in the CWDP pipeline.
 
     U < 0.50 → IOPS-Bound      (bottleneck: NAND tR + CMD overhead)
     U > 0.90 → Bandwidth-Bound  (bottleneck: channel bus bandwidth)
     """
     _require_loaded()
+    if request_size_bytes <= 0:
+        raise ValueError(
+            f"request_size_bytes must be > 0, got {request_size_bytes}"
+        )
+    dies_per_ch = CHIPS_PER_CH * DIES_PER_CHIP
     data_out_ns = (request_size_bytes / 2.0) * (2000.0 / CHANNEL_BW_MBPS)
-    fixed_cost = NAND_tR_NS + CHANNELS * (CMD_TRANSFER_NS + DATA_SETUP_NS)
-    variable_cost = CHANNELS * data_out_ns
-    return variable_cost / (fixed_cost + variable_cost)
+    bus_time_ns = CMD_TRANSFER_NS + DATA_SETUP_NS + data_out_ns
+    pipeline_cycle_ns = max(NAND_tR_NS, dies_per_ch * bus_time_ns)
+    return dies_per_ch * data_out_ns / pipeline_cycle_ns
 
 
 # =====================================================================
@@ -348,33 +380,30 @@ def merge_sequential(
     if not mem_req_list:
         return [], [], []
 
-    reads  = [mr for mr in mem_req_list
-              if mr.memory_object.req_type == MemoryRequestType.KREAD]
-    writes = [mr for mr in mem_req_list
-              if mr.memory_object.req_type == MemoryRequestType.KWRITE]
-
     merged_addr, merged_size, merged_type = [], [], []
 
-    for group, mqsim_type in ((reads, 1), (writes, 0)):
-        if not group:
-            continue
-        group.sort(key=lambda mr: mr.memory_object.addr)
+    first = mem_req_list[0].memory_object
+    cur_addr = first.addr
+    cur_size = first.size
+    cur_type = 1 if first.req_type == MemoryRequestType.KREAD else 0
 
-        cur_addr = group[0].memory_object.addr
-        cur_size = group[0].memory_object.size
-        for req in group[1:]:
-            obj = req.memory_object
-            if obj.addr == cur_addr + cur_size:
-                cur_size += obj.size
-            else:
-                merged_addr.append(cur_addr)
-                merged_size.append(cur_size)
-                merged_type.append(mqsim_type)
-                cur_addr = obj.addr
-                cur_size = obj.size
+    for req in mem_req_list[1:]:
+        obj = req.memory_object
+        mqsim_type = 1 if obj.req_type == MemoryRequestType.KREAD else 0
+        if mqsim_type == cur_type and obj.addr == cur_addr + cur_size:
+            cur_size += obj.size
+            continue
+
         merged_addr.append(cur_addr)
         merged_size.append(cur_size)
-        merged_type.append(mqsim_type)
+        merged_type.append(cur_type)
+        cur_addr = obj.addr
+        cur_size = obj.size
+        cur_type = mqsim_type
+
+    merged_addr.append(cur_addr)
+    merged_size.append(cur_size)
+    merged_type.append(cur_type)
 
     return merged_addr, merged_size, merged_type
 

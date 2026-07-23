@@ -49,19 +49,24 @@ class MQSimMediaSystem(BaseMediaSystem):
     # ------------------------------------------------------------------
 
     def _init_mqsim(self):
-        # resolve config paths (warn when explicit path is missing)
+        # Explicit paths are part of the experiment definition.  Silently
+        # replacing a typo with a default would produce valid-looking results
+        # for the wrong device.
         ssd = self.config.ssd_config_path
-        if ssd and not os.path.isfile(ssd):
-            logger.warning("SSD config not found: %s, falling back to default", ssd)
-        ssd = ssd if (ssd and os.path.isfile(ssd)) else _DEFAULT_SSD_CONFIG
+        if ssd:
+            if not os.path.isfile(ssd):
+                raise FileNotFoundError(f"SSD config not found: {ssd}")
+        else:
+            ssd = _DEFAULT_SSD_CONFIG
         self._ssd_config_path = os.path.abspath(ssd)
 
         wl = self.config.workload_config_path
-        if wl and not os.path.isfile(wl):
-            logger.warning("Workload config not found: %s", wl)
-        self._workload_config_path = (
-            os.path.abspath(wl) if (wl and os.path.isfile(wl)) else ""
-        )
+        if wl:
+            if not os.path.isfile(wl):
+                raise FileNotFoundError(f"Workload config not found: {wl}")
+        else:
+            wl = _DEFAULT_WORKLOAD_CONFIG
+        self._workload_config_path = os.path.abspath(wl)
 
         # ---- auto-configure trace slicing from MediaConfig ----
         self._trace_config = TraceSliceConfig(
@@ -78,10 +83,9 @@ class MQSimMediaSystem(BaseMediaSystem):
             logger.info("Loaded NAND geometry from %s: %s",
                         self._ssd_config_path,
                         ", ".join(f"{k}={v}" for k, v in loaded.items()))
-            if self._workload_config_path and os.path.isfile(self._workload_config_path):
-                res = load_from_workload_xml(self._workload_config_path)
-                logger.debug("Workload resource IDs: %s",
-                             {k: v for k, v in res.items() if v})
+            res = load_from_workload_xml(self._workload_config_path)
+            logger.debug("Workload resource IDs: %s",
+                         {k: v for k, v in res.items() if v})
 
         # check native pybind11 availability
         try:

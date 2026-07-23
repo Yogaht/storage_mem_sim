@@ -92,7 +92,7 @@
 |---|---|---|
 | `Flash_Channel_Count` | 8 | NAND 闪存通道数。→ `CHANNELS` |
 | `Flash_Channel_Width` | 1 | 通道宽度（总线位宽因子） |
-| `Channel_Transfer_Rate` | 333 | 单通道数据传输速率 (MT/s)。→ `CHANNEL_BW_MBPS` |
+| `Channel_Transfer_Rate` | 333 | 单通道数据传输速率 (MB/s)。MQSim 的整数 ns 周期要求该值不超过 1000。→ `CHANNEL_BW_MBPS` |
 | `Chip_No_Per_Channel` | 4 | 每通道芯片数。→ `CHIPS_PER_CH` |
 | `Flash_Comm_Protocol` | NVDDR2 | 闪存通信协议。`NVDDR2` / `NVDDR3`，决定 CMD/DATA 时序 |
 
@@ -209,34 +209,31 @@ Plane_No_Per_Die = 2       →    Plane_IDs   = 0..1
 ## 三、如何根据配置参数计算理论iops和理论带宽
 
 ### 一、核心公式
-#### 1. 总 Plane 数（决定最大并行度）
-N_planes = Flash_Channel_Count × Chip_No_Per_Channel × Die_No_Per_Chip × Plane_No_Per_Die
 
-#### 2. 单次操作时间
-数据传输时间（数据通过 NAND 通道传输的时间）：
-t_transfer = Page_Capacity / (Channel_Transfer_Rate × Flash_Channel_Width)
-           = 16384 bytes / (1600 × 10^6 × 1 byte/s)
-           = 10240 ns = 10.24 µs
+`pymqsim.trace` 用多个独立资源上界的最小值作为理论 IOPS：
 
-读一个 page 的时间：
-t_read = Page_Read_Latency + t_transfer
+```text
+TotalDies   = Channels × ChipsPerCH × DiesPerChip
+TotalPlanes = TotalDies × PlanesPerDie
+DiesPerCH   = ChipsPerCH × DiesPerChip
+PagesPerIO  = ceil(RequestSize / PageSize)
 
-| Page 类型 | 公式                  | 结果           |
-| ------- | ------------------- | ------------ |
-| LSB     | 35000 ns + 10240 ns | **45.24 µs** |
-| CSB     | 50000 ns + 10240 ns | **60.24 µs** |
-| MSB     | 75000 ns + 10240 ns | **85.24 µs** |
+DataOut     = RequestSize × 1000 / ChannelRateMBps
+BusTime     = CmdTransfer + DataSetup + DataOut
+PipeCycle   = max(tR, DiesPerCH × BusTime)
 
-写一个 TLC page 的时间（需要 3 步）：
+IOPS_channel = Channels × ChannelRateMBps × 1e6 / RequestSize
+IOPS_nand    = TotalPlanes × 1e9 / (PagesPerIO × tR)
+IOPS_cwdp    = TotalDies × 1e9 / PipeCycle
+IOPS_pcie    = PCIeLaneGBps × LaneCount × 1e9 / RequestSize
+IOPS_qd      = QueueDepth × 1e9 / (tR + BusTime)
 
-t_write_TLC = (Page_Program_Latency_LSB + t_transfer)
-            + (Page_Program_Latency_CSB + t_transfer)
-            + (Page_Program_Latency_MSB + t_transfer)
-            = 510.24 + 760.24 + 1210.24 = **2480.72 µs**
+TheoryIOPS = min(IOPS_channel, IOPS_nand, IOPS_cwdp, IOPS_pcie, IOPS_qd)
+TheoryBW   = min(TheoryIOPS × RequestSize / 1e6,
+                 Channels × ChannelRateMBps)
+BusUtil    = DiesPerCH × DataOut / PipeCycle
+```
 
-#### 3. IOPS 计算
-IOPS = N_parallel / t_operation
-其中 N_parallel 是实际同时工作的 plane 数（现实远小于 1024）
-
-#### 4. 带宽计算
-Bandwidth = IOPS × Page_Capacity
+这些公式是理想化上界，不包含 MQSim 的完整调度、FTL、GC、缓存和 host
+开销。性能报告应同时给出请求大小、读写比例、地址模式、队列深度与所用
+XML，不能只引用理论值。

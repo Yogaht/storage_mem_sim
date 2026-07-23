@@ -163,12 +163,19 @@ MemoryMetrics (single issue_request result)
   ├── cycles: int              ← from MediaMetrics
   ├── total_time: float        ← from MediaMetrics
   ├── memory_scale_factor: int
-  └── memory_reqs_num: int     ← number of media requests issued
+  ├── memory_reqs_num: int     ← logical requests in simulated instance
+  ├── global_memory_reqs_num: int
+  ├── bandwidth: float         ← B/s reported by backend
+  ├── iops / iops_read / iops_write
+  │                              ← global logical engine request rates
+  └── backend_iops*            ← media/backend request rates
 
 MemoryEngineMetrics (cumulative)
   ├── cycles / total_time / memory_reqs_num (accumulated)
   ├── mem_metrics_list: List[MemoryMetrics]
-  └── avg_bandwidth: float
+  ├── bandwidth: float         ← total simulated bytes / total time
+  ├── iops*                    ← global logical counts / total time
+  └── backend_iops*            ← time-weighted backend rates
 ```
 
 ---

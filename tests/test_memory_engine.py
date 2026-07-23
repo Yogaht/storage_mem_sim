@@ -159,37 +159,61 @@ class TestMemoryEngineMetrics(unittest.TestCase):
         self.assertEqual(len(em.mem_metrics_list), 1)
 
     def test_engine_metrics_bandwidth_from_total_bytes(self):
-        """avg_bandwidth = total_bytes / total_time (exact, no time-weight needed)."""
+        """bandwidth = total_bytes / total_time (exact, no time-weight needed)."""
         em = MemoryEngineMetrics()
         m = MemoryMetrics(cycles=0, total_time=2.0, memory_reqs_num=10,
                           bandwidth=999, iops=999)
         em.update(m, total_bytes=1000)
-        self.assertEqual(em.avg_bandwidth, 500.0)  # 1000 / 2.0
+        self.assertEqual(em.bandwidth, 500.0)  # 1000 / 2.0
 
     def test_engine_metrics_iops_time_weighted(self):
-        """IOPS uses time-weighted average when backend provides it."""
+        """Engine and backend IOPS retain their distinct request levels."""
         em = MemoryEngineMetrics()
-        # Batch 1: 1000 IOPS for 0.1s → 100 ops
+        # Batch 1: 100 global logical ops and 100 backend ops.
         m1 = MemoryMetrics(cycles=0, total_time=0.1, memory_reqs_num=1,
-                           iops=1000.0, bandwidth=500.0)
+                           global_memory_reqs_num=100,
+                           global_memory_read_reqs_num=80,
+                           global_memory_write_reqs_num=20,
+                           iops=1000.0, iops_read=800.0, iops_write=200.0,
+                           backend_iops=1000.0,
+                           backend_iops_read=700.0,
+                           backend_iops_write=300.0,
+                           bandwidth=500.0)
         em.update(m1, total_bytes=50)
         self.assertEqual(em.iops, 1000.0)
+        self.assertEqual(em.iops_read, 800.0)
+        self.assertEqual(em.iops_write, 200.0)
+        self.assertEqual(em.backend_iops, 1000.0)
+        self.assertEqual(em.backend_iops_read, 700.0)
+        self.assertEqual(em.backend_iops_write, 300.0)
 
-        # Batch 2: 500 IOPS for 0.2s → 100 ops
+        # Batch 2: another 100 ops over 0.2 seconds.
         m2 = MemoryMetrics(cycles=0, total_time=0.2, memory_reqs_num=1,
-                           iops=500.0, bandwidth=250.0)
+                           global_memory_reqs_num=100,
+                           global_memory_read_reqs_num=20,
+                           global_memory_write_reqs_num=80,
+                           iops=500.0, iops_read=100.0, iops_write=400.0,
+                           backend_iops=500.0,
+                           backend_iops_read=200.0,
+                           backend_iops_write=300.0,
+                           bandwidth=250.0)
         em.update(m2, total_bytes=50)
-        # 200 ops / 0.3s = 666.7 IOPS (time-weighted, NOT 750 from sum or avg)
+        # Both levels happen to be 200 ops / 0.3s in this example.
         self.assertAlmostEqual(em.iops, 666.666, places=1)
+        self.assertAlmostEqual(em.iops_read, 333.333, places=1)
+        self.assertAlmostEqual(em.iops_write, 333.333, places=1)
+        self.assertAlmostEqual(em.backend_iops, 666.666, places=1)
+        self.assertAlmostEqual(em.backend_iops_read, 366.666, places=1)
+        self.assertAlmostEqual(em.backend_iops_write, 300.0, places=1)
 
     def test_engine_metrics_iops_no_data_no_update(self):
-        """When backend doesn't provide IOPS, cumulative iops stays unchanged."""
+        """Logical IOPS is available even when a backend reports no IOPS."""
         em = MemoryEngineMetrics()
         m = MemoryMetrics(cycles=0, total_time=0.5, memory_reqs_num=1,
                           global_memory_reqs_num=100, iops=0.0)
         em.update(m, total_bytes=1000)
-        # Backend gave no IOPS → can't compute it correctly, leave at 0
-        self.assertEqual(em.iops, 0.0)
+        self.assertEqual(em.iops, 200.0)
+        self.assertEqual(em.backend_iops, 0.0)
 
 
 # ------------------------------------------------------------------
@@ -264,7 +288,7 @@ class TestMemoryEngineWithMQSim(unittest.TestCase):
         self.assertEqual(len(em.mem_metrics_list), 2)
         self.assertEqual(em.total_bytes, total_bytes_per_batch * 2)
         self.assertGreater(em.total_time, 0)
-        self.assertGreater(em.avg_bandwidth, 0)
+        self.assertGreater(em.bandwidth, 0)
         self.assertGreater(em.iops, 0)
 
 

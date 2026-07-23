@@ -284,7 +284,9 @@ py::dict run_with_stats(const std::string& ssd_config_path,
                          const std::string& workload_config_path,
                          const std::string& output_dir = ".") {
     py::dict stats;
-    simulate(ssd_config_path, workload_config_path, output_dir, &stats);
+    if (!simulate(ssd_config_path, workload_config_path, output_dir, &stats)) {
+        throw std::runtime_error("MQSim simulation failed");
+    }
     return stats;
 }
 

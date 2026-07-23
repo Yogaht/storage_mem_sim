@@ -20,12 +20,13 @@ MemoryEngine.issue_request()
 | 字段 | 说明 |
 |---|---|
 | `arrival_ns` | 到达时间（固定为 0，MemoryEngine 无时序） |
-| `device_id` | CWDP 通道号：`(page // pages_per_group) % CHANNELS`。每个 group = PLANES×DIES×CHIPS 个连续 page 映射到同一通道，相邻 group 映射到下一通道 |
+| `device_id` | 按 trace 行号轮转的设备/流标识：`line_index % CHANNELS`；它不是物理 NAND channel 映射 |
 | `lba` | 逻辑块地址 = `addr / 512`（地址已 sector 对齐到 512B 边界，保留页内扇区偏移） |
 | `sectors` | 扇区数 = `ceil(size / 512)` |
 | `req_type` | 1 = 读, 0 = 写 |
 
-> device_id 不是简单的 `i % N` 轮转，而是基于 CWDP 物理布局：同一通道的 32 pages（PLANES×DIES×CHIPS）编为一组，连续请求需跨组才能命中不同通道。
+> NAND 的 channel/chip/die/plane 分配由 MQSim 的 FTL 和
+> `Plane_Allocation_Scheme` 决定，trace 生成器不自行重写 LBA 来模拟 CWDP。
 
 ### 请求合并
 
@@ -41,9 +42,9 @@ MemoryEngine.issue_request()
 |------|---------|----------|------|
 | `merge_contiguous` | `true` | `false` | 是否合并连续同类请求 |
 | `request_size` | 131072 (128 KB) | 4096 (4 KB) | 每条 trace line 最大字节数 |
-| `cwdp_aware` | `true` | `true` | CWDP 通道重分布：将地址映射到不同 CWDP group，确保所有通道均匀使用 |
 
-> `merge_contiguous` 和 `cwdp_aware` 通过 `MediaConfig` → `MQSimMediaSystem._init_mqsim()` → `TraceSliceConfig` 自动传递，无需手动创建 TraceSliceConfig。
+> `merge_contiguous` 和 `request_size` 通过 `MediaConfig` →
+> `MQSimMediaSystem._init_mqsim()` → `TraceSliceConfig` 自动传递。
 
 ### MQSim 配置文件
 
@@ -63,14 +64,15 @@ MemoryEngine.issue_request()
 
 ```python
 from pymqsim import (
-    TraceSliceConfig, write_trace_file,
+    TraceSliceConfig, write_trace_file, load_from_ssdconfig_xml,
     generate_workload_xml, run_simulation,
     # 理论公式（无需运行仿真即可预估性能）
     theory_iops, theory_bandwidth_mbps, theory_bus_utilization,
 )
 
-# 1. 生成 trace 文件
-cfg = TraceSliceConfig(merge_contiguous=True, request_size=131072, cwdp_aware=True)
+# 1. 加载几何并生成 trace 文件
+load_from_ssdconfig_xml("ssdconfig.xml")
+cfg = TraceSliceConfig(merge_contiguous=True, request_size=131072)
 total_bytes, lines = write_trace_file(mem_req_list, "trace.txt", cfg)
 
 # 2. 生成 workload XML（基于 default_workload.xml 模板，替换 trace 路径）
@@ -96,11 +98,11 @@ for size in [4096, 8192, 32768, 65536, 131072]:
 输出示例：
 
 ```
-4KB   → IOPS=363,714  BW=1,490 MB/s  U=55.9%   (IOPS-Bound)
-8KB   → IOPS=233,266  BW=1,911 MB/s  U=71.7%   (过渡区)
-32KB  → IOPS=74,007   BW=2,425 MB/s  U=91.0%   (带宽-Bound)
-64KB  → IOPS=38,741   BW=2,539 MB/s  U=95.3%   (强带宽-Bound)
-128KB → IOPS=19,836   BW=2,600 MB/s  U=97.6%   (强带宽-Bound)
+4KB   → IOPS=633,899  BW=2,596 MB/s  U=97.5%   (带宽-Bound)
+8KB   → IOPS=321,020  BW=2,630 MB/s  U=98.7%   (带宽-Bound)
+32KB  → IOPS=81,035   BW=2,655 MB/s  U=99.7%   (强带宽-Bound)
+64KB  → IOPS=40,583   BW=2,660 MB/s  U=99.8%   (强带宽-Bound)
+128KB → IOPS=20,308   BW=2,662 MB/s  U=99.9%   (强带宽-Bound)
 ```
 
 ### 项目结构

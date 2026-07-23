@@ -187,7 +187,7 @@ def main(argv=None):
     if backend == MediaSystemBackend.RAMULATOR:
         print(f"Cycles:    {metrics.cycles}")
     print(f"Time:      {metrics.total_time * 1e9:.1f} ns")
-    print(f"Bandwidth: {engine.get_engine_metrics().avg_bandwidth / 1e9:.2f} GB/s")
+    print(f"Bandwidth: {engine.get_engine_metrics().bandwidth / 1e9:.2f} GB/s")
 
     print("=" * 60)
 

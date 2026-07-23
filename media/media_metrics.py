@@ -36,14 +36,25 @@ class MediaMetrics:
     iops_write: float = 0.0
 
     def __add__(self, other: "MediaMetrics") -> "MediaMetrics":
-        """Combine two MediaMetrics by summing all fields."""
+        """Combine counters and time-weight rate metrics."""
+        total_time = self.time + other.time
+
+        def combined_rate(left: float, right: float) -> float:
+            if total_time <= 0:
+                return 0.0
+            return (left * self.time + right * other.time) / total_time
+
         return MediaMetrics(
             num_read_requests=self.num_read_requests + other.num_read_requests,
             num_write_requests=self.num_write_requests + other.num_write_requests,
             num_other_requests=self.num_other_requests + other.num_other_requests,
             cycles=self.cycles + other.cycles,
             num_media_reqs=self.num_media_reqs + other.num_media_reqs,
-            time=self.time + other.time,
+            time=total_time,
+            bandwidth=combined_rate(self.bandwidth, other.bandwidth),
+            iops=combined_rate(self.iops, other.iops),
+            iops_read=combined_rate(self.iops_read, other.iops_read),
+            iops_write=combined_rate(self.iops_write, other.iops_write),
         )
 
 

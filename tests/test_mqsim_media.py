@@ -111,6 +111,25 @@ class TestTraceGeneration(unittest.TestCase):
         _, lines, _ = self._write(reqs, merge=True)
         self.assertEqual(lines, 2)
 
+    def test_merge_preserves_input_order(self):
+        """Merging must not sort addresses or group reads before writes."""
+        reqs = [
+            _req(8192, 4096, MemoryRequestType.KWRITE),
+            _req(0, 4096, MemoryRequestType.KREAD),
+            _req(4096, 4096, MemoryRequestType.KREAD),
+            _req(12288, 4096, MemoryRequestType.KWRITE),
+        ]
+        _, lines, path = self._write(reqs, merge=True)
+        self.assertEqual(lines, 3)
+        self.assertEqual(
+            self._read_trace(path),
+            [
+                "0 0 16 8 0",
+                "0 1 0 16 1",
+                "0 2 24 8 0",
+            ],
+        )
+
     # -- slicing -------------------------------------------------------
 
     def test_large_request_sliced(self):
@@ -210,6 +229,33 @@ class TestConfigLoading(unittest.TestCase):
         # 128KB should be bandwidth-bound
         self.assertGreater(u128k, 0.80, "128KB should be BW-bound")
 
+    def test_rate_above_mqsim_timing_limit_raises(self):
+        """MQSim's integer-ns channel period cannot represent >1000 MB/s."""
+        with open(self._ssd, encoding="utf-8") as src:
+            xml = src.read().replace(
+                "<Channel_Transfer_Rate>333</Channel_Transfer_Rate>",
+                "<Channel_Transfer_Rate>1001</Channel_Transfer_Rate>",
+            )
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".xml", encoding="utf-8", delete=False
+        ) as dst:
+            dst.write(xml)
+            invalid_path = dst.name
+        try:
+            with self.assertRaisesRegex(
+                ValueError, "Channel_Transfer_Rate must be <= 1000"
+            ):
+                self.C.load_from_ssdconfig_xml(invalid_path)
+        finally:
+            os.remove(invalid_path)
+
+    def test_theory_rejects_non_positive_request_size(self):
+        self.C.load_from_ssdconfig_xml(self._ssd)
+        with self.assertRaises(ValueError):
+            self.C.theory_iops(0)
+        with self.assertRaises(ValueError):
+            self.C.theory_bus_utilization(-1)
+
 
 # ======================================================================
 # Error handling
@@ -234,6 +280,18 @@ class TestMQSimErrors(unittest.TestCase):
             self.sys.handler_mem_request(
                 [_req(0, 512, MemoryRequestType.KREAD)])
         self.assertIn("_mqsim", str(ctx.exception))
+
+    def test_explicit_missing_ssd_config_raises(self):
+        with self.assertRaisesRegex(FileNotFoundError, "SSD config not found"):
+            MQSimMediaSystem(_cfg(ssd_config_path="/missing/ssdconfig.xml"))
+
+    def test_explicit_missing_workload_config_raises(self):
+        with self.assertRaisesRegex(
+            FileNotFoundError, "Workload config not found"
+        ):
+            MQSimMediaSystem(
+                _cfg(workload_config_path="/missing/workload.xml")
+            )
 
 
 # ======================================================================
