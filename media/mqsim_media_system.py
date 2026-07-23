@@ -49,15 +49,18 @@ class MQSimMediaSystem(BaseMediaSystem):
     # ------------------------------------------------------------------
 
     def _init_mqsim(self):
-        # resolve config paths (always, even without _mqsim)
-        ssd = self.config.ssd_config_path or _DEFAULT_SSD_CONFIG
-        self._ssd_config_path = (
-            os.path.abspath(ssd) if os.path.isfile(ssd)
-            else _DEFAULT_SSD_CONFIG
-        )
-        wl = self.config.workload_config_path or _DEFAULT_WORKLOAD_CONFIG
+        # resolve config paths (warn when explicit path is missing)
+        ssd = self.config.ssd_config_path
+        if ssd and not os.path.isfile(ssd):
+            logger.warning("SSD config not found: %s, falling back to default", ssd)
+        ssd = ssd if (ssd and os.path.isfile(ssd)) else _DEFAULT_SSD_CONFIG
+        self._ssd_config_path = os.path.abspath(ssd)
+
+        wl = self.config.workload_config_path
+        if wl and not os.path.isfile(wl):
+            logger.warning("Workload config not found: %s", wl)
         self._workload_config_path = (
-            os.path.abspath(wl) if os.path.isfile(wl) else ""
+            os.path.abspath(wl) if (wl and os.path.isfile(wl)) else ""
         )
 
         # ---- auto-configure trace slicing from MediaConfig ----
@@ -125,14 +128,15 @@ class MQSimMediaSystem(BaseMediaSystem):
             self.system_metrics.update_from_media(m)
             return m
 
-        # output directory
-        trace_dir = os.path.join(
+        # output directory — unique sub-dir per run to isolate concurrent calls
+        trace_root = os.path.join(
             os.path.dirname(__file__), "mqsim_wrapper", "trace")
+        rid = uuid.uuid4().hex[:12]
+        trace_dir = os.path.join(trace_root, rid)
         os.makedirs(trace_dir, exist_ok=True)
 
-        rid = uuid.uuid4().hex[:12]
-        trace_path = os.path.join(trace_dir, f"mqsim_trace_{rid}.txt")
-        workload_path = os.path.join(trace_dir, f"mqsim_workload_{rid}.xml")
+        trace_path = os.path.join(trace_dir, "trace.txt")
+        workload_path = os.path.join(trace_dir, "workload.xml")
 
         # 1. write trace
         total_bytes, trace_lines = write_trace_file(
@@ -173,7 +177,7 @@ class MQSimMediaSystem(BaseMediaSystem):
         metrics = MediaMetrics(
             num_read_requests=num_read,
             num_write_requests=num_write,
-            num_media_reqs=len(mem_req_list),
+            num_media_reqs=trace_lines,
             time=total_time,
             bandwidth=result.bandwidth_bytes_per_sec,
             iops=result.total_iops,

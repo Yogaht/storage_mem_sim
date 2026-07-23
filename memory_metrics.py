@@ -74,8 +74,8 @@ class MemoryEngineMetrics:
         if self.total_time <= 0:
             return
 
-        # ---- avg_bandwidth: total_bytes / total_time (exact, always works) ----
-        self.avg_bandwidth = self.total_bytes / self.total_time
+        # ---- bandwidth: total_bytes / total_time (exact, always works) ----
+        self.bandwidth = self.total_bytes / self.total_time
 
         if old_time > 0 and metrics.iops > 0:
             old_weight = old_time / self.total_time
