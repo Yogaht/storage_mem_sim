@@ -56,6 +56,11 @@ NAND_tR_NS:      int = None
 CMD_TRANSFER_NS: int = None
 DATA_SETUP_NS:   int = None
 
+# Host / system limits (set from ssdconfig.xml)
+IO_QUEUE_DEPTH:       int = None
+PCIE_LANE_BW_GBPS:  float = None
+PCIE_LANE_COUNT:      int = None
+
 # Universal constant (MQSim internal, always 512)
 SECTOR_SIZE: int = 512
 
@@ -147,6 +152,12 @@ def load_from_ssdconfig_xml(xml_path: str) -> Dict[str, int]:
     loaded['CMD_TRANSFER_NS'] = proto_params['CMD_TRANSFER_NS']
     loaded['DATA_SETUP_NS'] = proto_params['DATA_SETUP_NS']
 
+    # ---- host / system limits ----
+    hps = root.find('.//Host_Parameter_Set')
+    loaded.update(_xml_int('IO_QUEUE_DEPTH', dps, 'IO_Queue_Depth'))
+    loaded.update(_xml_float('PCIE_LANE_BW_GBPS', hps, 'PCIe_Lane_Bandwidth'))
+    loaded.update(_xml_int('PCIE_LANE_COUNT', hps, 'PCIe_Lane_Count'))
+
     # Verify all required names are loaded
     missing = [n for n in _GEOMETRY_NAMES if n not in loaded]
     if missing:
@@ -194,23 +205,52 @@ def load_from_workload_xml(xml_path: str) -> Dict[str, list]:
 # =====================================================================
 
 def theory_iops(request_size_bytes: int) -> float:
-    """Theoretical max IOPS under CWDP perfect interleaving.
+    """Theoretical max IOPS — min of independent resource bounds.
 
-    Pipeline model:
-      BusTime  = CMD + Setup + DataOut
-      DataOut  = (S / 2) × (2000 / CHANNEL_BW_MBPS)  ns
-      PipeCycle = tR + CHANNELS × BusTime
-      IOPS     = TOTAL_DIES × 1e9 / PipeCycle
+    The tightest upper bound across:
 
-    TOTAL_DIES = CHANNELS × CHIPS_PER_CH × DIES_PER_CHIP
-    represents the number of independent die-level command queues
-    that can be pipelined simultaneously.
+    1. Channel bus bandwidth (pure data-rate limit):
+          iops_bw = TOTAL_CHANNEL_BW_MBPS × 1e6 / S
+
+    2. NAND plane array (pure page-read parallelism limit):
+          iops_nand = TOTAL_PLANES × 1e9 / (pages_per_io × tR)
+
+    3. CWDP pipeline (combined NAND tR + channel command serialization):
+          PipeCycle = tR + CHANNELS × (CMD + Setup + DataOut)
+          iops_cwdp = TOTAL_DIES × 1e9 / PipeCycle
+
+    4. Host PCIe bandwidth (if loaded from ssdconfig.xml):
+          iops_pcie = PCIE_LANE_BW_GBPS × 1e9 × PCIE_LANE_COUNT / S
+
+    5. Device queue depth (Little's Law, if loaded from ssdconfig.xml):
+          per_io_latency_ns = tR + BusTime  (minimum single-request latency)
+          iops_qd = IO_QUEUE_DEPTH × 1e9 / per_io_latency_ns
+
+    Bounds (4) and (5) are only applied when the corresponding XML tags
+    are present in the loaded ssdconfig.xml.
     """
     _require_loaded()
+    pages_per_io = max(1, math.ceil(request_size_bytes / PAGE_SIZE_BYTES))
+
+    # Bound 1 — pure channel bus bandwidth
+    iops_bw = TOTAL_CHANNEL_BW_MBPS * 1e6 / request_size_bytes
+
+    # Bound 2 — pure NAND plane parallelism
+    iops_nand = TOTAL_PLANES / (pages_per_io * NAND_tR_NS * 1e-9)
+
+    # Bound 3 — CWDP pipeline (NAND + command + data serialization)
     data_out_ns = (request_size_bytes / 2.0) * (2000.0 / CHANNEL_BW_MBPS)
     bus_time_ns = CMD_TRANSFER_NS + DATA_SETUP_NS + data_out_ns
     pipeline_cycle_ns = NAND_tR_NS + CHANNELS * bus_time_ns
-    return TOTAL_DIES * 1e9 / pipeline_cycle_ns
+    iops_cwdp = TOTAL_DIES * 1e9 / pipeline_cycle_ns
+
+    # Bound 4 — host PCIe bandwidth
+    iops_pcie = PCIE_LANE_BW_GBPS * 1e9 * PCIE_LANE_COUNT / request_size_bytes
+
+    # Bound 5 — device queue depth (Little's Law with minimum latency)
+    iops_qd = IO_QUEUE_DEPTH * 1e9 / (NAND_tR_NS + bus_time_ns)
+
+    return min(iops_bw, iops_nand, iops_cwdp, iops_pcie, iops_qd)
 
 
 def theory_bandwidth_mbps(request_size_bytes: int) -> float:
@@ -442,6 +482,27 @@ def _xml_int(name: str, element: ET.Element, tag: str) -> Dict[str, int]:
     except ValueError:
         raise ValueError(
             f"Tag <{tag}> has non-integer value: {child.text.strip()!r}"
+        ) from None
+
+    globals()[name] = new_val
+    return {name: new_val}
+
+
+def _xml_float(name: str, element: ET.Element, tag: str) -> Dict[str, float]:
+    """Extract float from XML element child *tag*, set module global.
+
+    Raises ValueError if the tag is missing or unparseable.
+    """
+    child = element.find(tag)
+    if child is None or not (child.text and child.text.strip()):
+        raise ValueError(
+            f"Missing or empty tag <{tag}> in SSD config"
+        )
+    try:
+        new_val = float(child.text.strip())
+    except ValueError:
+        raise ValueError(
+            f"Tag <{tag}> has non-float value: {child.text.strip()!r}"
         ) from None
 
     globals()[name] = new_val

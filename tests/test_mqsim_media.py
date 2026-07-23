@@ -49,6 +49,13 @@ def _cfg(**kw):
 class TestTraceGeneration(unittest.TestCase):
     """Trace output for key addr/size/merge combinations."""
 
+    @classmethod
+    def setUpClass(cls):
+        from media.mqsim_wrapper.pymqsim.trace import load_from_ssdconfig_xml
+        cfg = os.path.join(os.path.dirname(__file__),
+                           "config", "default_ssdconfig.xml")
+        load_from_ssdconfig_xml(cfg)
+
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="mqsim_")
 

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Analytic SSD config (16KB-optimized, 16KB-optimized) — ~12.0M IOPS / ~196.5 GB/s @ 16KB
+  Analytic SSD config (16KB-optimized) — ~12.0M IOPS / ~196.5 GB/s @ 16KB
   Architecture: 32CH × 8chip × 4die = 1,024 dies
 
   ═══════════════════════════════════════════════════════════════════════
@@ -16,7 +16,7 @@
   ═══════════════════════════════════════════════════════════════════════
   Timing (NVDDR2)
   ═══════════════════════════════════════════════════════════════════════
-    NAND_tR         = 30,000 ns  (page read latency; raised for BW scaling beyond 16KB)
+    NAND_tR         =  9,600 ns  (page read latency)
     CMD_TRANSFER    =    290 ns  (NVDDR2 command cycle)
     DATA_SETUP      =     30 ns  (NVDDR2 data setup)
     CHANNEL_BW      =  8,000 MB/s per channel
@@ -29,6 +29,11 @@
     Unlike the multi-size analytic config (which uses 4KB/128KB reference
     points), this config targets a SINGLE request size.
 
+    At 16KB: BusUtil=76.8% — bus-bound leaning but tR is still significant
+    (11.2% of PipeCycle).  BW saturates quickly beyond 16KB because tR is
+    too short to create pipeline slack.  This is intentional — the config
+    optimizes for peak efficiency at exactly 16KB.
+
   ═══════════════════════════════════════════════════════════════════════
   IOPS & Bandwidth Calculation (CWDP pipeline model — pymqsim.trace)
   ═══════════════════════════════════════════════════════════════════════
@@ -37,14 +42,14 @@
     DataOut_ns = (RequestSize_bytes / 2) × (2000 / CH_BW_MBps)
     DDR: 2 bytes per bus cycle.  2000/CH_BW converts MB/s → ns/byte.
 
-    DataOut = (16384 / 2) × (2000 / 11600)
-            = 8192 × 0.17241
-            = 1,412 ns
+    DataOut = (16384 / 2) × (2000 / 8000)
+            = 8192 × 0.25
+            = 2,048 ns
 
   ── Step 2: BusTime (total channel bus occupancy per request) ──
     BusTime_ns = CMD + Setup + DataOut_ns
 
-    BusTime = 290 + 30 + 1412 = 1,732 ns
+    BusTime = 290 + 30 + 2048 = 2,368 ns
 
   ── Step 3: PipeCycle (one full pipeline cycle — CWDP serial model) ──
     PipeCycle_ns = tR + CHANNELS × BusTime_ns
@@ -52,86 +57,80 @@
     CHANNELS × BusTime is the bus serialization penalty: all 32 channels
     take turns on the shared bus within one pipeline round.
 
-    PipeCycle = 30,000 + 32 × 1,732
-              = 30,000 + 55,424
-              = 85,424 ns
+    PipeCycle = 9,600 + 32 × 2,368
+              = 9,600 + 75,776
+              = 85,376 ns
 
     Breakdown:
-      tR portion:     30,000 ns  (35.1%)  ← die read latency — DOMINANT!
+      tR portion:      9,600 ns  (11.2%)  ← die read latency
       CMD+Setup:      10,240 ns  (12.0%)  ← 32 × 320 ns
-      DataOut:        45,184 ns  (52.9%)  ← 32 × 1,412 ns
+      DataOut:        65,536 ns  (76.8%)  ← 32 × 2,048 ns
       ─────────────────────────
-      Total:          85,424 ns  (100%)
-
-    ★ v1→v2 key change: tR 9,600→30,000 ns, CH_BW 8,000→11,600 MB/s.
-      tR/PipeCycle ratio: 11.2%→35.1%.  Pipeline is now tR-limited at
-      16KB, so larger sizes amortize fixed tR → BW scales.
+      Total:          85,376 ns  (100%)
 
   ── Step 4: IOPS (16KB target) ──
     IOPS = TOTAL_DIES × 10^9 / PipeCycle_ns
     TOTAL_DIES = 1,024 independent die-level command queues.
 
-    IOPS = 1,024 × 1,000,000,000 / 85,424
-         = 11,985,406
+    IOPS = 1,024 × 1,000,000,000 / 85,376
+         = 11,994,003
          ≈ 12.0M IOPS  ✓
 
   ── Step 5: Bandwidth (16KB target) ──
     BW_MBps = IOPS × RequestSize_bytes / 1,000,000
 
-    BW = 11,985,406 × 16,384 / 1,000,000
-       = 196,369 MB/s
-       ≈ 196.4 GB/s  (≈ 200 GB/s target, within 2%)
+    BW = 11,994,003 × 16,384 / 1,000,000
+       = 196,510 MB/s
+       ≈ 196.5 GB/s  (≈ 200 GB/s target, within 2%)
 
-    ✓ 196.4 GB/s < 371.2 GB/s (Total CH BW) — plenty of headroom!
+    ✓ 196.5 GB/s < 256.0 GB/s (Total CH BW) — bus is NOT the bottleneck!
 
   ── Step 6: Bus Utilization @ 16KB ──
     BusUtil = (CHANNELS × DataOut) / PipeCycle
 
-    BusUtil = 32 × 1,412 / 85,424
-            = 45,184 / 85,424
-            = 52.9%  → Bus is NOT the bottleneck.  tR is.
+    BusUtil = 32 × 2,048 / 85,376
+            = 65,536 / 85,376
+            = 76.8%  → Bus-bound leaning: data transfer dominates (76.8%),
+                      but tR+CMD/Setup (23.2%) is still significant.
 
   ═══════════════════════════════════════════════════════════════════════
-  Theory BW at Key Request Sizes (CWDP pipeline model)
+  Reference Values at Other Request Sizes (for completeness)
   ═══════════════════════════════════════════════════════════════════════
 
     ┌──────────┬──────────┬───────────┬──────────────┬───────────────┬──────────┐
     │ Req Size │ DataOut  │ PipeCycle │     IOPS     │   BW (MB/s)   │ BusUtil  │
     │          │   (ns)   │   (ns)    │              │               │          │
     ├──────────┼──────────┼───────────┼──────────────┼───────────────┼──────────┤
-    │   4 KB   │    353   │   51,616  │  19,868,329  │    81,381     │  21.9%   │
-    │  16 KB   │  1,412   │   85,424  │  11,985,406  │   196,369     │  52.9%   │
-    │  32 KB   │  2,824   │  130,592  │   7,838,665  │   256,857     │  69.2%   │
-    │  64 KB   │  5,648   │  221,056  │   4,632,877  │   303,620     │  81.8%   │
-    │ 128 KB   │ 11,296   │  401,792  │   2,548,418  │   334,026     │  90.0%   │
+    │   4 KB   │    512   │   36,224  │  28,268,551  │   115,788     │  45.2%   │
+    │  16 KB   │  2,048   │   85,376  │  11,994,003  │   196,510     │  76.8%   │
+    │  32 KB   │  4,096   │  150,912  │   6,785,411  │   222,344     │  86.9%   │
+    │  64 KB   │  8,192   │  281,984  │   3,631,412  │   237,988     │  93.0%   │
+    │ 128 KB   │ 16,384   │  544,128  │   1,881,910  │   246,666     │  96.4%   │
     └──────────┴──────────┴───────────┴──────────────┴───────────────┴──────────┘
 
-    ✓ BW@16KB  = 196.4 GB/s ≈ 200 GB/s target (maintained from v1!)
-    ✓ BW@32KB  = 256.9 GB/s (+30.8% over 16KB — v1 was flat)
-    ✓ BW@128KB = 334.0 GB/s (+70.1% over 16KB — v1 was +25.6%)
+    ✓ BW@128KB = 246.7 GB/s < Total CH BW = 256.0 GB/s — physical OK!
+    ✓ BW@16KB  = 196.5 GB/s ≈ 200 GB/s target
 
   ═══════════════════════════════════════════════════════════════════════
-  Parameter Selection (Plan B: tR=30,000, CH_BW=11,600)
+  Parameter Selection Rationale
   ═══════════════════════════════════════════════════════════════════════
-    Constraint: BW@16KB ≈ 196.5 GB/s (same target as v1)
+    For a single request size S, the CWDP model gives ONE constraint:
 
-        tR + 32 × (320 + 16,384,000/B) = 85,376  (fixed PipeCycle)
+        PipeCycle = tR + 32 × (320 + S×1000/B) = TD×10⁹ / IOPS_target
 
-    Chose tR = 30,000 ns (35.1% of PipeCycle, up from 11.2% in v1):
-      CH×BusTime_budget = 85,376 - 30,000 = 55,376 ns
-      BusTime = 55,376 / 32 = 1,730.5 ns
-      DataOut = 1,730.5 - 320 = 1,410.5 ns
-      B = 16,384,000 / 1,410.5 = 11,616 → rounded to 11,600 MB/s
+    With S=16KB and IOPS=12M:
+        tR + 10,240 + 524,288,000/B = 85,333
 
-    Higher tR means the pipeline is tR-limited, not bus-limited →
-    larger request sizes amortize tR, BW keeps growing.
+    This is one equation in two unknowns (tR, B). We have 1 degree of
+    freedom.  We chose B = 8,000 MB/s (round number, reasonable per-channel
+    bandwidth), which forces tR ≈ 9,557 ns.  Rounded to tR = 9,600 ns for
+    cleanliness — gives IOPS ≈ 12.0M, BW ≈ 196.5 GB/s.
 
-  ═══════════════════════════════════════════════════════════════════════
-  MQSim Efficiency Note
-  ═══════════════════════════════════════════════════════════════════════
-    BusUtil=76.8% is — MQSim CWDP should achieve ~90% theory
-    efficiency at 16KB.  BW scaling with request size should be more
-    visible than v1 because bus is not saturated.
+    Alternative (tR, B) pairs that also hit ~12M IOPS @ 16KB:
+      tR= 8,000 → B= 7,815    tR=10,000 → B= 8,055
+      tR=12,000 → B= 8,310    tR=15,000 → B= 8,725
+
+    Higher CH_BW → lower BusUtil → better MQSim efficiency.
 
   ═══════════════════════════════════════════════════════════════════════
   MQSim Efficiency Note
@@ -165,7 +164,7 @@
         <Memory_Type>FLASH</Memory_Type>
         <HostInterface_Type>NVME</HostInterface_Type>
         <IO_Queue_Depth>65535</IO_Queue_Depth>
-        <Queue_Fetch_Size>8192</Queue_Fetch_Size>
+        <Queue_Fetch_Size>2048</Queue_Fetch_Size>
         <Caching_Mechanism>ADVANCED</Caching_Mechanism>
         <Data_Cache_Sharing_Mode>SHARED</Data_Cache_Sharing_Mode>
         <Data_Cache_Capacity>268435456</Data_Cache_Capacity>
@@ -193,9 +192,7 @@
         <Preferred_suspend_erase_time_for_read>250000</Preferred_suspend_erase_time_for_read>
         <Preferred_suspend_erase_time_for_write>250000</Preferred_suspend_erase_time_for_write>
         <Preferred_suspend_write_time_for_read>250000</Preferred_suspend_write_time_for_read>
-        <!-- ════════════════════════════════════════════════════════════ -->
         <!-- 32CH × 8chip × 4die = 1024 dies.  Total CH BW = 256 GB/s. -->
-        <!-- ════════════════════════════════════════════════════════════ -->
         <Flash_Channel_Count>32</Flash_Channel_Count>
         <Flash_Channel_Width>1</Flash_Channel_Width>
         <!-- CH_BW = 8,000 MB/s → total = 32 × 8,000 = 256 GB/s > BW@16KB=196.5 ✓ -->
