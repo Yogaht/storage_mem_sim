@@ -19,7 +19,7 @@ class MediaMetrics:
         cycles: Total cycles consumed (filled by Ramulator backend).
         num_media_reqs: Total number of media-level requests processed.
         time: Simulation time in seconds (filled by Analytic/MQSim backends).
-        avg_bandwidth: Bandwidth in bytes/second (from backend).
+        bandwidth: Bandwidth in bytes/second (from backend).
         iops: Total IOPS (from backend).
         iops_read: Read IOPS (from backend).
         iops_write: Write IOPS (from backend).
@@ -30,7 +30,7 @@ class MediaMetrics:
     cycles: int = 0
     num_media_reqs: int = 0
     time: float = 0.0
-    avg_bandwidth: float = 0.0
+    bandwidth: float = 0.0
     iops: float = 0.0
     iops_read: float = 0.0
     iops_write: float = 0.0
@@ -58,7 +58,7 @@ class MediaSystemMetrics:
         cycles: Accumulated cycles.
         num_media_reqs: Accumulated media request count.
         time: Accumulated time in seconds.
-        avg_bandwidth: Accumulated avg_bandwidth (B/s).
+        bandwidth: Accumulated bandwidth (B/s).
         iops: Accumulated total IOPS.
         iops_read: Accumulated read IOPS.
         iops_write: Accumulated write IOPS.
@@ -70,7 +70,7 @@ class MediaSystemMetrics:
     cycles: int = 0
     num_media_reqs: int = 0
     time: float = 0.0
-    avg_bandwidth: float = 0.0
+    bandwidth: float = 0.0
     iops: float = 0.0
     iops_read: float = 0.0
     iops_write: float = 0.0
@@ -99,11 +99,11 @@ class MediaSystemMetrics:
             self.iops = self.iops * old_weight + metrics.iops * new_weight
             self.iops_read = self.iops_read * old_weight + metrics.iops_read * new_weight
             self.iops_write = self.iops_write * old_weight + metrics.iops_write * new_weight
-            self.avg_bandwidth = (self.avg_bandwidth * old_weight
-                              + metrics.avg_bandwidth * new_weight)
+            self.bandwidth = (self.bandwidth * old_weight
+                              + metrics.bandwidth * new_weight)
         else:
             # First batch — seed with its values directly
             self.iops = metrics.iops
             self.iops_read = metrics.iops_read
             self.iops_write = metrics.iops_write
-            self.avg_bandwidth = metrics.avg_bandwidth
+            self.bandwidth = metrics.bandwidth
