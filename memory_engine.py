@@ -55,7 +55,7 @@ class MemoryEngine:
 
         if mem_config.media_config is None:
             raise ValueError("MemoryEngineConfig.media_config is required")
-        from .media.media_system_factory import MediaSystemFactory
+        from media.media_system_factory import MediaSystemFactory
         self.media_system = MediaSystemFactory.create(mem_config.media_config)
 
         # Set granularity from backend: Ramulator uses _tx_bytes (e.g. 32),
@@ -239,13 +239,6 @@ class MemoryEngine:
         )
 
         self.engine_metrics.update(mem_metrics, simulated_bytes)
-
-        logger.debug(
-            "issue_request done: cycles=%d time=%.2fns sim_reqs=%d "
-            "global_reqs=%d bw=%.1fMB/s",
-            mem_metrics.cycles, mem_metrics.total_time * 1e9,
-            mem_metrics.memory_reqs_num, mem_metrics.global_memory_reqs_num,
-            self.engine_metrics.avg_bandwidth / 1e6 if self.engine_metrics.avg_bandwidth else 0)
 
         return mem_metrics
 

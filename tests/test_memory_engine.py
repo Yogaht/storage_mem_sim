@@ -5,15 +5,13 @@ import sys
 import os
 import tempfile
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from memory_type import MemoryType, MemoryRequestType
-from memory_config import MemoryEngineConfig
-from memory_object import MemoryObject
-from memory_request import MemoryRequest
-from memory_engine import MemoryEngine
-from memory_metrics import MemoryMetrics, MemoryEngineMetrics
-from media import (
+from ..memory_type import MemoryType, MemoryRequestType
+from ..memory_config import MemoryEngineConfig
+from ..memory_object import MemoryObject
+from ..memory_request import MemoryRequest
+from ..memory_engine import MemoryEngine
+from ..memory_metrics import MemoryMetrics, MemoryEngineMetrics
+from ..media import (
     MediaConfig,
     MediaSystemBackend,
 )
