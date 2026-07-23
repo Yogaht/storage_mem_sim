@@ -77,11 +77,9 @@ class MediaSystemMetrics:
     media_metrics_list: List[MediaMetrics] = field(default_factory=list)
 
     def update_from_media(self, metrics: MediaMetrics):
-        """Accumulate a MediaMetrics batch into the cumulative counters.
+        old_time = self.time
 
-        Args:
-            metrics: Per-batch metrics to accumulate.
-        """
+        # ---- additive counters (sum across batches) ----
         self.num_read_requests += metrics.num_read_requests
         self.num_write_requests += metrics.num_write_requests
         self.num_other_requests += metrics.num_other_requests
@@ -89,3 +87,23 @@ class MediaSystemMetrics:
         self.num_media_reqs += metrics.num_media_reqs
         self.time += metrics.time
         self.media_metrics_list.append(metrics)
+
+        # ---- rate metrics (time-weighted average) ----
+        if self.time <= 0:
+            return
+
+        if old_time > 0:
+            # R_new = R_old × (T_old / T_new) + r_new × (t_new / T_new)
+            old_weight = old_time / self.time
+            new_weight = metrics.time / self.time
+            self.iops = self.iops * old_weight + metrics.iops * new_weight
+            self.iops_read = self.iops_read * old_weight + metrics.iops_read * new_weight
+            self.iops_write = self.iops_write * old_weight + metrics.iops_write * new_weight
+            self.bandwidth = (self.bandwidth * old_weight
+                              + metrics.bandwidth * new_weight)
+        else:
+            # First batch — seed with its values directly
+            self.iops = metrics.iops
+            self.iops_read = metrics.iops_read
+            self.iops_write = metrics.iops_write
+            self.bandwidth = metrics.bandwidth

@@ -1,0 +1,227 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Analytic SSD config (16KB-optimized) — ~12.0M IOPS / ~196.5 GB/s @ 16KB
+  Architecture: 32CH × 8chip × 4die = 1,024 dies
+
+  ═══════════════════════════════════════════════════════════════════════
+  Geometry
+  ═══════════════════════════════════════════════════════════════════════
+    CHANNELS        =  32        (flash channels)
+    CHIPS_PER_CH    =   8        (NAND packages per channel)
+    DIES_PER_CHIP   =   4        (dies per package)
+    PLANES_PER_DIE  =   1        (simplest geometry)
+    ─────────────────────────
+    TOTAL_DIES      = 32 × 8 × 4 = 1,024
+
+  ═══════════════════════════════════════════════════════════════════════
+  Timing (NVDDR2)
+  ═══════════════════════════════════════════════════════════════════════
+    NAND_tR         =  9,600 ns  (page read latency)
+    CMD_TRANSFER    =    290 ns  (NVDDR2 command cycle)
+    DATA_SETUP      =     30 ns  (NVDDR2 data setup)
+    CHANNEL_BW      =  8,000 MB/s per channel
+    TOTAL_CHANNEL_BW = 32 × 8,000 = 256.0 GB/s
+
+  ═══════════════════════════════════════════════════════════════════════
+  Target Request Size: 16 KB (single-size workload)
+  ═══════════════════════════════════════════════════════════════════════
+    This config is tuned for workloads where ALL requests are 16 KB.
+    Unlike the multi-size analytic config (which uses 4KB/128KB reference
+    points), this config targets a SINGLE request size.
+
+    At 16KB: BusUtil=76.8% — bus-bound leaning but tR is still significant
+    (11.2% of PipeCycle).  BW saturates quickly beyond 16KB because tR is
+    too short to create pipeline slack.  This is intentional — the config
+    optimizes for peak efficiency at exactly 16KB.
+
+  ═══════════════════════════════════════════════════════════════════════
+  IOPS & Bandwidth Calculation (CWDP pipeline model — pymqsim.trace)
+  ═══════════════════════════════════════════════════════════════════════
+
+  ── Step 1: DataOut (data transfer time on channel bus @ 16KB) ──
+    DataOut_ns = (RequestSize_bytes / 2) × (2000 / CH_BW_MBps)
+    DDR: 2 bytes per bus cycle.  2000/CH_BW converts MB/s → ns/byte.
+
+    DataOut = (16384 / 2) × (2000 / 8000)
+            = 8192 × 0.25
+            = 2,048 ns
+
+  ── Step 2: BusTime (total channel bus occupancy per request) ──
+    BusTime_ns = CMD + Setup + DataOut_ns
+
+    BusTime = 290 + 30 + 2048 = 2,368 ns
+
+  ── Step 3: PipeCycle (one full pipeline cycle — CWDP serial model) ──
+    PipeCycle_ns = tR + CHANNELS × BusTime_ns
+    tR is the NAND page read latency (die-side).
+    CHANNELS × BusTime is the bus serialization penalty: all 32 channels
+    take turns on the shared bus within one pipeline round.
+
+    PipeCycle = 9,600 + 32 × 2,368
+              = 9,600 + 75,776
+              = 85,376 ns
+
+    Breakdown:
+      tR portion:      9,600 ns  (11.2%)  ← die read latency
+      CMD+Setup:      10,240 ns  (12.0%)  ← 32 × 320 ns
+      DataOut:        65,536 ns  (76.8%)  ← 32 × 2,048 ns
+      ─────────────────────────
+      Total:          85,376 ns  (100%)
+
+  ── Step 4: IOPS (16KB target) ──
+    IOPS = TOTAL_DIES × 10^9 / PipeCycle_ns
+    TOTAL_DIES = 1,024 independent die-level command queues.
+
+    IOPS = 1,024 × 1,000,000,000 / 85,376
+         = 11,994,003
+         ≈ 12.0M IOPS  ✓
+
+  ── Step 5: Bandwidth (16KB target) ──
+    BW_MBps = IOPS × RequestSize_bytes / 1,000,000
+
+    BW = 11,994,003 × 16,384 / 1,000,000
+       = 196,510 MB/s
+       ≈ 196.5 GB/s  (≈ 200 GB/s target, within 2%)
+
+    ✓ 196.5 GB/s < 256.0 GB/s (Total CH BW) — bus is NOT the bottleneck!
+
+  ── Step 6: Bus Utilization @ 16KB ──
+    BusUtil = (CHANNELS × DataOut) / PipeCycle
+
+    BusUtil = 32 × 2,048 / 85,376
+            = 65,536 / 85,376
+            = 76.8%  → Bus-bound leaning: data transfer dominates (76.8%),
+                      but tR+CMD/Setup (23.2%) is still significant.
+
+  ═══════════════════════════════════════════════════════════════════════
+  Reference Values at Other Request Sizes (for completeness)
+  ═══════════════════════════════════════════════════════════════════════
+
+    ┌──────────┬──────────┬───────────┬──────────────┬───────────────┬──────────┐
+    │ Req Size │ DataOut  │ PipeCycle │     IOPS     │   BW (MB/s)   │ BusUtil  │
+    │          │   (ns)   │   (ns)    │              │               │          │
+    ├──────────┼──────────┼───────────┼──────────────┼───────────────┼──────────┤
+    │   4 KB   │    512   │   36,224  │  28,268,551  │   115,788     │  45.2%   │
+    │  16 KB   │  2,048   │   85,376  │  11,994,003  │   196,510     │  76.8%   │
+    │  32 KB   │  4,096   │  150,912  │   6,785,411  │   222,344     │  86.9%   │
+    │  64 KB   │  8,192   │  281,984  │   3,631,412  │   237,988     │  93.0%   │
+    │ 128 KB   │ 16,384   │  544,128  │   1,881,910  │   246,666     │  96.4%   │
+    └──────────┴──────────┴───────────┴──────────────┴───────────────┴──────────┘
+
+    ✓ BW@128KB = 246.7 GB/s < Total CH BW = 256.0 GB/s — physical OK!
+    ✓ BW@16KB  = 196.5 GB/s ≈ 200 GB/s target
+
+  ═══════════════════════════════════════════════════════════════════════
+  Parameter Selection Rationale
+  ═══════════════════════════════════════════════════════════════════════
+    For a single request size S, the CWDP model gives ONE constraint:
+
+        PipeCycle = tR + 32 × (320 + S×1000/B) = TD×10⁹ / IOPS_target
+
+    With S=16KB and IOPS=12M:
+        tR + 10,240 + 524,288,000/B = 85,333
+
+    This is one equation in two unknowns (tR, B). We have 1 degree of
+    freedom.  We chose B = 8,000 MB/s (round number, reasonable per-channel
+    bandwidth), which forces tR ≈ 9,557 ns.  Rounded to tR = 9,600 ns for
+    cleanliness — gives IOPS ≈ 12.0M, BW ≈ 196.5 GB/s.
+
+    Alternative (tR, B) pairs that also hit ~12M IOPS @ 16KB:
+      tR= 8,000 → B= 7,815    tR=10,000 → B= 8,055
+      tR=12,000 → B= 8,310    tR=15,000 → B= 8,725
+
+    Higher CH_BW → lower BusUtil → better MQSim efficiency.
+
+  ═══════════════════════════════════════════════════════════════════════
+  MQSim Efficiency Note
+  ═══════════════════════════════════════════════════════════════════════
+    CWDP model is idealized.  At BusUtil=76.8%, MQSim efficiency (η) is
+    expected around 55-70% based on interpolation between measured points:
+      tR=8,000, BusUtil=50.9% → η≈75%
+      tR=56,200, BusUtil=22.1% → η≈25%
+
+    Expected MQSim actual: ~6.6-8.4M IOPS, ~108-138 GB/s @ 16KB.
+    Adjust tR downward to increase actual IOPS if needed.
+
+  ═══════════════════════════════════════════════════════════════════════
+  Capacity (kept minimal — for analytic throughput testing)
+  ═══════════════════════════════════════════════════════════════════════
+    1,024 planes × 256 blocks × 256 pages × 16 KB ≈ 1 TB raw
+    Total pages: 67.1M → ~1.6 GB FTL metadata (still safe)
+-->
+<Execution_Parameter_Set>
+    <Host_Parameter_Set>
+        <!-- PCIe ×16 @ 15 GB/s/lane = 240 GB/s — not the bottleneck -->
+        <PCIe_Lane_Bandwidth>15.00000</PCIe_Lane_Bandwidth>
+        <PCIe_Lane_Count>16</PCIe_Lane_Count>
+        <SATA_Processing_Delay>400000</SATA_Processing_Delay>
+        <Enable_ResponseTime_Logging>false</Enable_ResponseTime_Logging>
+        <ResponseTime_Logging_Period_Length>1000000</ResponseTime_Logging_Period_Length>
+    </Host_Parameter_Set>
+    <Device_Parameter_Set>
+        <Seed>321</Seed>
+        <Enabled_Preconditioning>false</Enabled_Preconditioning>
+        <Memory_Type>FLASH</Memory_Type>
+        <HostInterface_Type>NVME</HostInterface_Type>
+        <IO_Queue_Depth>65535</IO_Queue_Depth>
+        <Queue_Fetch_Size>2048</Queue_Fetch_Size>
+        <Caching_Mechanism>ADVANCED</Caching_Mechanism>
+        <Data_Cache_Sharing_Mode>SHARED</Data_Cache_Sharing_Mode>
+        <Data_Cache_Capacity>268435456</Data_Cache_Capacity>
+        <Data_Cache_DRAM_Row_Size>8192</Data_Cache_DRAM_Row_Size>
+        <Data_Cache_DRAM_Data_Rate>100</Data_Cache_DRAM_Data_Rate>
+        <Data_Cache_DRAM_Data_Busrt_Size>1</Data_Cache_DRAM_Data_Busrt_Size>
+        <Data_Cache_DRAM_tRCD>13</Data_Cache_DRAM_tRCD>
+        <Data_Cache_DRAM_tCL>13</Data_Cache_DRAM_tCL>
+        <Data_Cache_DRAM_tRP>13</Data_Cache_DRAM_tRP>
+        <Address_Mapping>PAGE_LEVEL</Address_Mapping>
+        <Ideal_Mapping_Table>true</Ideal_Mapping_Table>
+        <CMT_Capacity>2097152</CMT_Capacity>
+        <CMT_Sharing_Mode>SHARED</CMT_Sharing_Mode>
+        <Plane_Allocation_Scheme>CWDP</Plane_Allocation_Scheme>
+        <Transaction_Scheduling_Policy>PRIORITY_OUT_OF_ORDER</Transaction_Scheduling_Policy>
+        <Overprovisioning_Ratio>0.07</Overprovisioning_Ratio>
+        <GC_Exec_Threshold>0.05000</GC_Exec_Threshold>
+        <GC_Block_Selection_Policy>RGA</GC_Block_Selection_Policy>
+        <Use_Copyback_for_GC>false</Use_Copyback_for_GC>
+        <Preemptible_GC_Enabled>false</Preemptible_GC_Enabled>
+        <GC_Hard_Threshold>0.005000</GC_Hard_Threshold>
+        <Dynamic_Wearleveling_Enabled>true</Dynamic_Wearleveling_Enabled>
+        <Static_Wearleveling_Enabled>true</Static_Wearleveling_Enabled>
+        <Static_Wearleveling_Threshold>100</Static_Wearleveling_Threshold>
+        <Preferred_suspend_erase_time_for_read>250000</Preferred_suspend_erase_time_for_read>
+        <Preferred_suspend_erase_time_for_write>250000</Preferred_suspend_erase_time_for_write>
+        <Preferred_suspend_write_time_for_read>250000</Preferred_suspend_write_time_for_read>
+        <!-- 32CH × 8chip × 4die = 1024 dies.  Total CH BW = 256 GB/s. -->
+        <Flash_Channel_Count>32</Flash_Channel_Count>
+        <Flash_Channel_Width>1</Flash_Channel_Width>
+        <!-- CH_BW = 8,000 MB/s → total = 32 × 8,000 = 256 GB/s > BW@16KB=196.5 ✓ -->
+        <Channel_Transfer_Rate>8000</Channel_Transfer_Rate>
+        <Chip_No_Per_Channel>8</Chip_No_Per_Channel>
+        <!-- NVDDR2: CMD=290ns, Setup=30ns -->
+        <Flash_Comm_Protocol>NVDDR2</Flash_Comm_Protocol>
+        <Flash_Parameter_Set>
+            <Flash_Technology>MLC</Flash_Technology>
+            <CMD_Suspension_Support>ERASE</CMD_Suspension_Support>
+            <!-- tR = 9,600 ns (~9.6 µs); targets ~12M IOPS / ~196.5 GB/s @ 16KB -->
+            <Page_Read_Latency_LSB>9600</Page_Read_Latency_LSB>
+            <Page_Read_Latency_CSB>9600</Page_Read_Latency_CSB>
+            <Page_Read_Latency_MSB>9600</Page_Read_Latency_MSB>
+            <Page_Program_Latency_LSB>250000</Page_Program_Latency_LSB>
+            <Page_Program_Latency_CSB>250000</Page_Program_Latency_CSB>
+            <Page_Program_Latency_MSB>250000</Page_Program_Latency_MSB>
+            <Block_Erase_Latency>3800000</Block_Erase_Latency>
+            <Block_PE_Cycles_Limit>10000</Block_PE_Cycles_Limit>
+            <Suspend_Erase_Time>250000</Suspend_Erase_Time>
+            <Suspend_Program_Time>100000</Suspend_Program_Time>
+            <!-- 4 die/chip — CWDP model per die, MQSim serializes at chip level -->
+            <Die_No_Per_Chip>4</Die_No_Per_Chip>
+            <Plane_No_Per_Die>1</Plane_No_Per_Die>
+            <!-- Small capacity: 67.1M pages → ~1.6 GB FTL -->
+            <Block_No_Per_Plane>256</Block_No_Per_Plane>
+            <Page_No_Per_Block>256</Page_No_Per_Block>
+            <Page_Capacity>16384</Page_Capacity>
+            <Page_Metadat_Capacity>448</Page_Metadat_Capacity>
+        </Flash_Parameter_Set>
+    </Device_Parameter_Set>
+</Execution_Parameter_Set>

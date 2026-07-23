@@ -46,7 +46,7 @@ def main():
 
     # ---- common params (with CLI overrides) ----
     num_requests = args.num_requests or mc.get("num_requests", 64)
-    request_size = args.size or mc.get("request_size", 64)
+    request_size = args.size or mc.get("request_size", 512*8)
 
     # ---- build MediaConfig ----
     media_cfg = MediaConfig(
@@ -58,6 +58,7 @@ def main():
         ssd_config_path=os.path.abspath(mc["ssd_config"]) if mc.get("ssd_config") else "",
         workload_config_path=os.path.abspath(mc["workload_config"]) if mc.get("workload_config") else "",
         request_size_bytes=request_size,
+        merge_contiguous=mc.get("merge_contiguous", True),
     )
 
     engine = MemoryEngine(MemoryEngineConfig(
@@ -70,13 +71,9 @@ def main():
     ms = engine.media_system
     tx_bytes = getattr(ms, '_tx_bytes', request_size)
 
-    # ---- MQSim trace config ----
+    # ---- MQSim trace config: override request_size per scenario ----
     if backend == MediaSystemBackend.MQSIM:
-        from .media.mqsim_wrapper.pymqsim import TraceSliceConfig
-        merge_contiguous = mc.get("merge_contiguous", True)
-        ms.trace_config = TraceSliceConfig(
-            merge_contiguous=merge_contiguous,
-            request_size=request_size)
+        ms.trace_config.request_size = request_size
 
     # ---- status banner ----
     print("=" * 60)
@@ -124,11 +121,6 @@ def main():
         print(f"Cycles:    {metrics.cycles}")
     print(f"Time:      {metrics.total_time * 1e9:.1f} ns")
     print(f"Bandwidth: {engine.get_engine_metrics().avg_bandwidth / 1e9:.2f} GB/s")
-
-    if backend == MediaSystemBackend.MQSIM and hasattr(ms, 'last_result'):
-        lr = ms.last_result
-        if lr is not None and lr.avg_latency_ns > 0:
-            print(f"Read Lat:  {lr.avg_latency_ns:.1f} ns")
 
     print("=" * 60)
 
