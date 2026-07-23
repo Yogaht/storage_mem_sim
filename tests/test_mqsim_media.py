@@ -14,13 +14,11 @@ import tempfile
 import unittest
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from memory_type import MemoryRequestType
-from memory_config import MemoryEngineConfig
-from memory_object import MemoryObject
-from memory_request import MemoryRequest
-from media import MediaConfig, MediaSystemBackend, MQSimMediaSystem
+from ..memory_type import MemoryRequestType
+from ..memory_config import MemoryEngineConfig
+from ..memory_object import MemoryObject
+from ..memory_request import MemoryRequest
+from ..media import MediaConfig, MediaSystemBackend, MQSimMediaSystem
 
 
 # ======================================================================
