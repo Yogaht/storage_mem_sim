@@ -175,7 +175,7 @@ class TestConfigLoading(unittest.TestCase):
         cls._ssd = os.path.join(d, "default_ssdconfig.xml")
 
     def setUp(self):
-        import media.mqsim_wrapper.pymqsim.trace as C
+        from ..media.mqsim_wrapper.pymqsim import trace as C
         self.C = C
         C._loaded = False
 
