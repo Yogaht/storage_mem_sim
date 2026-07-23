@@ -214,8 +214,10 @@ def theory_iops(request_size_bytes: int) -> float:
 
 
 def theory_bandwidth_mbps(request_size_bytes: int) -> float:
-    """Theoretical peak bandwidth (MB/s) = IOPS × request_size_bytes / 1e6."""
-    return theory_iops(request_size_bytes) * request_size_bytes / 1e6
+    """Theoretical peak bandwidth (MB/s), capped by total channel bandwidth."""
+    _require_loaded()
+    bw = theory_iops(request_size_bytes) * request_size_bytes / 1e6
+    return min(bw, float(TOTAL_CHANNEL_BW_MBPS))
 
 
 def theory_bus_utilization(request_size_bytes: int) -> float:
@@ -265,9 +267,19 @@ class TraceSliceConfig:
 
     merge_contiguous  — merge adjacent same-type requests before slicing.
     request_size      — max bytes per trace line after slicing.
+                        Must be > 0 and a multiple of 512 (SECTOR_SIZE).
     """
     merge_contiguous: bool = True
     request_size: int = 131072
+
+    def __post_init__(self):
+        if self.request_size <= 0:
+            raise ValueError(
+                f"request_size must be > 0, got {self.request_size}")
+        if self.request_size % 512 != 0:
+            raise ValueError(
+                f"request_size must be a multiple of 512 (SECTOR_SIZE), "
+                f"got {self.request_size}")
 
     @classmethod
     def from_dict(cls, d: Dict | None) -> "TraceSliceConfig":
