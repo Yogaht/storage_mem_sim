@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from memory_request import MemoryRequest
+    from ....memory_request import MemoryRequest
 from ....memory_type import MemoryRequestType
 
 # =====================================================================

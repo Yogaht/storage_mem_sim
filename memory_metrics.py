@@ -21,14 +21,14 @@ class MemoryMetrics:
         global_memory_reqs_num: Total engine-level requests across all
                                 DP ranks and storage instances.
         iops: IOPS (from media backend).
-        bandwidth: Bandwidth in bytes/second (from media backend).
+        avg_bandwidth: Bandwidth in bytes/second (from media backend).
     """
     cycles: int = 0
     total_time: float = 0.0
     memory_scale_factor: int = 1
     memory_reqs_num: int = 0
     global_memory_reqs_num: int = 0
-    bandwidth: float = 0.0
+    avg_bandwidth: float = 0.0
     iops: float = 0.0
     iops_read: float = 0.0
     iops_write: float = 0.0
@@ -47,14 +47,14 @@ class MemoryEngineMetrics:
         global_memory_reqs_num: Accumulated engine-level requests
                                 across all DP ranks and instances.
         mem_metrics_list: History of per-request MemoryMetrics.
-        bandwidth: Cumulative bandwidth = total_bytes / total_time (B/s).
+        avg_bandwidth: Cumulative avg_bandwidth = total_bytes / total_time (B/s).
     """
     cycles: int = 0
     total_time: float = 0.0
     total_bytes: int = 0
     memory_reqs_num: int = 0
     global_memory_reqs_num: int = 0
-    bandwidth: float = 0.0
+    avg_bandwidth: float = 0.0
     iops: float = 0.0
     iops_read: float = 0.0
     iops_write: float = 0.0
@@ -74,8 +74,8 @@ class MemoryEngineMetrics:
         if self.total_time <= 0:
             return
 
-        # ---- bandwidth: total_bytes / total_time (exact, always works) ----
-        self.bandwidth = self.total_bytes / self.total_time
+        # ---- avg_bandwidth: total_bytes / total_time (exact, always works) ----
+        self.avg_bandwidth = self.total_bytes / self.total_time
 
         if old_time > 0 and metrics.iops > 0:
             old_weight = old_time / self.total_time
