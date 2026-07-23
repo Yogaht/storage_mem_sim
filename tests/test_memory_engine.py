@@ -162,7 +162,7 @@ class TestMemoryEngineMetrics(unittest.TestCase):
         """avg_bandwidth = total_bytes / total_time (exact, no time-weight needed)."""
         em = MemoryEngineMetrics()
         m = MemoryMetrics(cycles=0, total_time=2.0, memory_reqs_num=10,
-                          avg_bandwidth=999, iops=999)
+                          bandwidth=999, iops=999)
         em.update(m, total_bytes=1000)
         self.assertEqual(em.avg_bandwidth, 500.0)  # 1000 / 2.0
 
@@ -171,13 +171,13 @@ class TestMemoryEngineMetrics(unittest.TestCase):
         em = MemoryEngineMetrics()
         # Batch 1: 1000 IOPS for 0.1s → 100 ops
         m1 = MemoryMetrics(cycles=0, total_time=0.1, memory_reqs_num=1,
-                           iops=1000.0, avg_bandwidth=500.0)
+                           iops=1000.0, bandwidth=500.0)
         em.update(m1, total_bytes=50)
         self.assertEqual(em.iops, 1000.0)
 
         # Batch 2: 500 IOPS for 0.2s → 100 ops
         m2 = MemoryMetrics(cycles=0, total_time=0.2, memory_reqs_num=1,
-                           iops=500.0, avg_bandwidth=250.0)
+                           iops=500.0, bandwidth=250.0)
         em.update(m2, total_bytes=50)
         # 200 ops / 0.3s = 666.7 IOPS (time-weighted, NOT 750 from sum or avg)
         self.assertAlmostEqual(em.iops, 666.666, places=1)
@@ -225,7 +225,7 @@ class TestMemoryEngineWithMQSim(unittest.TestCase):
         ))
 
     def test_sequential_read_metrics(self):
-        """Sequential reads: avg_bandwidth > 0, iops > 0, time > 0."""
+        """Sequential reads: bandwidth > 0, iops > 0, time > 0."""
         n = 8
         request_size = 131072  # 128 KB
         total_bytes = request_size * n
@@ -238,10 +238,10 @@ class TestMemoryEngineWithMQSim(unittest.TestCase):
         )
 
         self.assertGreater(metrics.total_time, 0, "Simulation time should be > 0")
-        self.assertGreater(metrics.avg_bandwidth, 0, "Bandwidth should be > 0")
+        self.assertGreater(metrics.bandwidth, 0, "Bandwidth should be > 0")
         self.assertGreater(metrics.iops, 0, "IOPS should be > 0")
-        # avg_bandwidth * time ≈ total_bytes (within ~30%)
-        computed_bytes = metrics.avg_bandwidth * metrics.total_time
+        # bandwidth * time ≈ total_bytes (within ~30%)
+        computed_bytes = metrics.bandwidth * metrics.total_time
         ratio = computed_bytes / total_bytes
         self.assertAlmostEqual(ratio, 1.0, delta=0.3,
             msg=f"BW*time={computed_bytes:.0f} vs total={total_bytes}")
