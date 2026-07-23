@@ -198,7 +198,7 @@ class TestMemoryEngineMetrics(unittest.TestCase):
 
 _mqsim_available = False
 try:
-    from media.mqsim_wrapper.pymqsim import check_mqsim_available
+    from ..media.mqsim_wrapper.pymqsim import check_mqsim_available
     _mqsim_available = check_mqsim_available()
 except Exception:
     pass
@@ -289,7 +289,7 @@ _SSD_CFG = os.path.join(os.path.dirname(__file__), "config",
 
 def _load_geometry():
     """Load NAND geometry once for the trace-scenario tests."""
-    from media.mqsim_wrapper.pymqsim.trace import (
+    from ..media.mqsim_wrapper.pymqsim.trace import (
         load_from_ssdconfig_xml, PAGE_SIZE_BYTES, SECTOR_SIZE,
         SECTORS_PER_PAGE,
     )
@@ -307,7 +307,7 @@ def _make_req(addr, size, rtype=MemoryRequestType.KREAD):
 
 def _build_trace_lines(reqs, merge=True, req_size=8192):
     """Shortcut: build trace lines with given config."""
-    from media.mqsim_wrapper.pymqsim.trace import build_trace_lines, TraceSliceConfig
+    from ..media.mqsim_wrapper.pymqsim.trace import build_trace_lines, TraceSliceConfig
     cfg = TraceSliceConfig(merge_contiguous=merge, request_size=req_size)
     return build_trace_lines(reqs, cfg)
 
@@ -580,7 +580,7 @@ class TestTraceWriteFileOutput(unittest.TestCase):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def _write(self, reqs, merge=True, req_size=8192):
-        from media.mqsim_wrapper.pymqsim import write_trace_file, TraceSliceConfig
+        from ..media.mqsim_wrapper.pymqsim import write_trace_file, TraceSliceConfig
         cfg = TraceSliceConfig(merge_contiguous=merge, request_size=req_size)
         path = os.path.join(self.tmp, "trace.txt")
         total_bytes, line_count = write_trace_file(reqs, path, cfg)

@@ -49,7 +49,7 @@ class TestTraceGeneration(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        from media.mqsim_wrapper.pymqsim.trace import load_from_ssdconfig_xml
+        from ..media.mqsim_wrapper.pymqsim.trace import load_from_ssdconfig_xml
         cfg = os.path.join(os.path.dirname(__file__),
                            "config", "default_ssdconfig.xml")
         load_from_ssdconfig_xml(cfg)
@@ -63,7 +63,7 @@ class TestTraceGeneration(unittest.TestCase):
     # -- helpers -------------------------------------------------------
 
     def _write(self, reqs, merge=True, req_size=8192):
-        from media.mqsim_wrapper.pymqsim import write_trace_file, TraceSliceConfig
+        from ..media.mqsim_wrapper.pymqsim import write_trace_file, TraceSliceConfig
         cfg = TraceSliceConfig(merge_contiguous=merge, request_size=req_size)
         path = os.path.join(self.tmp, "trace.txt")
         return write_trace_file(reqs, path, cfg) + (path,)
@@ -242,7 +242,7 @@ class TestMQSimErrors(unittest.TestCase):
 
 _mqsim_ok = False
 try:
-    from media.mqsim_wrapper.pymqsim import check_mqsim_available
+    from ..media.mqsim_wrapper.pymqsim import check_mqsim_available
     _mqsim_ok = check_mqsim_available()
 except Exception:
     pass
@@ -282,8 +282,8 @@ class TestNativeVsBinary(unittest.TestCase):
     # -- helpers -------------------------------------------------------
 
     def _gen(self, reqs, name, merge=True, req_size=131072):
-        from media.mqsim_wrapper.pymqsim import (write_trace_file,
-                                                  generate_workload_xml)
+        from ..media.mqsim_wrapper.pymqsim import (write_trace_file,
+                                                     generate_workload_xml)
         tp = os.path.join(self._trace_dir, f"mqsim_{name}.txt")
         wp = os.path.join(self._trace_dir, f"mqsim_{name}.xml")
         cfg = type(self.sys.trace_config)(
@@ -293,14 +293,14 @@ class TestNativeVsBinary(unittest.TestCase):
         return tp, wp
 
     def _native(self, wl_path):
-        from media.mqsim_wrapper.pymqsim import run_simulation
+        from ..media.mqsim_wrapper.pymqsim import run_simulation
         return run_simulation(ssd_config_path=self._ssd_cfg,
                               workload_xml_path=wl_path,
                               output_dir=self._trace_dir)
 
     def _binary(self, wl_path):
         import subprocess
-        from media.mqsim_wrapper.pymqsim import parse_mqsim_output
+        from ..media.mqsim_wrapper.pymqsim import parse_mqsim_output
         proc = subprocess.run(
             [_bin, "-i", self._ssd_cfg, "-w", wl_path],
             cwd=self._trace_dir, input=b"\n",

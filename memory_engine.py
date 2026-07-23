@@ -55,7 +55,7 @@ class MemoryEngine:
 
         if mem_config.media_config is None:
             raise ValueError("MemoryEngineConfig.media_config is required")
-        from media.media_system_factory import MediaSystemFactory
+        from .media.media_system_factory import MediaSystemFactory
         self.media_system = MediaSystemFactory.create(mem_config.media_config)
 
         # Set granularity from backend: Ramulator uses _tx_bytes (e.g. 32),
