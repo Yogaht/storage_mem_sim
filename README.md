@@ -29,6 +29,11 @@ python -m storage_mem_sim.run -c storage_mem_sim/configs/analytic.json
 # 可选：调整请求数量和单请求大小
 python -m storage_mem_sim.run -c storage_mem_sim/configs/analytic.json --num-requests 32 --size 128
 
+# 可选：运行随机稀疏 page KV cache workload
+python -m storage_mem_sim.run \
+  -c storage_mem_sim/configs/analytic.json \
+  -w storage_mem_sim/configs/workloads/kv_sparse_page.json
+
 # 4. 如需运行 Ramulator2 后端
 cd storage_mem_sim
 git submodule update --init media/ramulator_wrapper/ramulator2

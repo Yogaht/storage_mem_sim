@@ -14,3 +14,7 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "ramulator_native: requires the Ramulator2 Python/native binding",
+    "mqsim_native: requires the MQSim pybind11 binding",
+]

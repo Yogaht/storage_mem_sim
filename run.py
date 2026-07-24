@@ -2,32 +2,53 @@
 
 Usage:
     python -m storage_mem_sim.run -c configs/analytic.json
+    python -m storage_mem_sim.run -c configs/analytic.json \
+        -w configs/workloads/kv_sparse_page.json
     python run.py -c configs/ramulator.json
 """
 
 import argparse
+from dataclasses import replace
 import json
 import os
 import sys
 
 
-def parse_args():
+def parse_args(argv=None):
     p = argparse.ArgumentParser(description="MemEngine memory simulator")
     p.add_argument("-c", "--config", required=True, help="JSON config file")
+    p.add_argument(
+        "-w",
+        "--workload",
+        default=None,
+        help="KV-cache workload JSON file",
+    )
     p.add_argument("--num-requests", type=int, default=None,
                    help="Number of requests (overrides config)")
     p.add_argument("--size", type=int, default=None,
                    help="Request size in bytes (overrides config)")
-    return p.parse_args()
+    return p.parse_args(argv)
 
 
-def main():
+def main(argv=None):
     from .media import MediaConfig, MediaSystemBackend
     from .memory_engine import MemoryEngine
     from .memory_config import MemoryEngineConfig
     from .memory_type import MemoryRequestType, MemoryType
+    from .workload.kv_cache_load import (
+        KVCacheLoadGenerator,
+        KVPageLayout,
+        load_kv_cache_load_config,
+    )
 
-    args = parse_args()
+    args = parse_args(argv)
+
+    if args.workload and (
+        args.num_requests is not None or args.size is not None
+    ):
+        raise ValueError(
+            "--num-requests and --size cannot be combined with --workload"
+        )
 
     with open(args.config) as f:
         raw = json.load(f)
@@ -57,7 +78,7 @@ def main():
         # MQSim-specific
         ssd_config_path=os.path.abspath(mc["ssd_config"]) if mc.get("ssd_config") else "",
         workload_config_path=os.path.abspath(mc["workload_config"]) if mc.get("workload_config") else "",
-        request_size_bytes=request_size,
+        request_size_bytes=mc.get("request_size", 131072),
     )
 
     engine = MemoryEngine(MemoryEngineConfig(
@@ -76,7 +97,32 @@ def main():
         merge_contiguous = mc.get("merge_contiguous", True)
         ms.trace_config = TraceSliceConfig(
             merge_contiguous=merge_contiguous,
-            request_size=request_size)
+            request_size=media_cfg.request_size_bytes)
+
+    # ---- optional KV-cache workload ----
+    generated_workload = None
+    workload_cfg = None
+    if args.workload:
+        if engine.mem_config.storage_instance_num != 1:
+            raise ValueError(
+                "KV-cache workload currently requires "
+                "storage_instance_num=1"
+            )
+        workload_cfg = load_kv_cache_load_config(args.workload)
+        if workload_cfg.base_addr != 0:
+            raise ValueError(
+                "base_addr must be omitted or zero in a CLI workload config; "
+                "run.py allocates the KV region through MemoryEngine"
+            )
+        region_size = KVPageLayout.required_region_size(
+            context_tokens=workload_cfg.context_tokens,
+            token_size_bytes=workload_cfg.token_size_bytes,
+            page_size_tokens=workload_cfg.page_size_tokens,
+            page_alignment_bytes=workload_cfg.page_alignment_bytes,
+        )
+        base_addr = engine.get_tensor_addr(region_size)
+        workload_cfg = replace(workload_cfg, base_addr=base_addr)
+        generated_workload = KVCacheLoadGenerator().generate(workload_cfg)
 
     # ---- status banner ----
     print("=" * 60)
@@ -89,8 +135,10 @@ def main():
             print(f"YAML:       {mc['config']}")
     elif media_type == "mqsim":
         print(f"Merge:      {mc.get('merge_contiguous', True)}")
-        print(f"Req size:   {request_size} B")
-        print(f"Num reqs:   {num_requests}")
+        print(f"Trace slice:{media_cfg.request_size_bytes:>8} B")
+        if generated_workload is None:
+            print(f"Req size:   {request_size} B")
+            print(f"Num reqs:   {num_requests}")
         if mc.get("ssd_config"):
             print(f"SSD config: {mc['ssd_config']}")
         if mc.get("workload_config"):
@@ -104,22 +152,41 @@ def main():
         print(f"Bandwidth:  {mc.get('bandwidth', 100.0)} GB/s")
     print(f"Capacity:   {mc.get('capacity', 32.0)} GB  |  "
           f"DP: {mc.get('dp', 1)}  |  Inst: {mc.get('instances', 1)}")
+    if generated_workload is not None:
+        print("Workload:   kv_cache_load")
+        print(f"Pattern:    {workload_cfg.pattern.value}")
+        print(f"Granularity: {workload_cfg.granularity.value}")
+        print(f"Token size: {workload_cfg.token_size_bytes} B")
+        print(f"Page size:  {workload_cfg.page_size_tokens} tokens")
+        print(f"Seed:       {workload_cfg.seed}")
     print("=" * 60)
 
     # ---- issue requests ----
-    addr = engine.get_tensor_addr(num_requests * request_size)
-    addrs = [addr + i * request_size for i in range(num_requests)]
+    if generated_workload is not None:
+        metrics = generated_workload.issue(engine)
+    else:
+        addr = engine.get_tensor_addr(num_requests * request_size)
+        addrs = [addr + i * request_size for i in range(num_requests)]
 
-    metrics = engine.issue_request(
-        addrs,
-        [request_size] * num_requests,
-        [MemoryRequestType.KREAD] * num_requests,
-    )
+        metrics = engine.issue_request(
+            addrs,
+            [request_size] * num_requests,
+            [MemoryRequestType.KREAD] * num_requests,
+        )
 
     # ---- results ----
-    print(f"Requests:  {num_requests} × {request_size}B → "
-          f"{metrics.memory_reqs_num} memory reqs "
-          f"(global: {metrics.global_memory_reqs_num})")
+    if generated_workload is not None:
+        stats = generated_workload.stats
+        print(f"Tokens:    {stats.selected_tokens}")
+        print(f"Pages:     {stats.unique_pages}")
+        print(f"Requests:  {stats.logical_requests} "
+              f"(global: {metrics.global_memory_reqs_num})")
+        print(f"Demand:    {stats.demand_bytes} B")
+        print(f"Issued:    {stats.issued_bytes} B")
+    else:
+        print(f"Requests:  {num_requests} × {request_size}B → "
+              f"{metrics.memory_reqs_num} memory reqs "
+              f"(global: {metrics.global_memory_reqs_num})")
     if backend == MediaSystemBackend.RAMULATOR:
         print(f"Cycles:    {metrics.cycles}")
     print(f"Time:      {metrics.total_time * 1e9:.1f} ns")

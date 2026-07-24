@@ -1,0 +1,11 @@
+{
+    "workload_type": "kv_cache_load",
+    "context_tokens": 4096,
+    "access_tokens": 128,
+    "token_size_bytes": 576,
+    "pattern": "sparse_uniform",
+    "granularity": "token",
+    "page_size_tokens": 16,
+    "page_alignment_bytes": 1,
+    "seed": 42
+}
