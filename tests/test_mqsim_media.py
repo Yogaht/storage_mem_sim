@@ -13,6 +13,7 @@ import shutil
 import tempfile
 import unittest
 import sys
+from unittest import mock
 
 from ..memory_type import MemoryRequestType
 from ..memory_config import MemoryEngineConfig
@@ -292,6 +293,37 @@ class TestMQSimErrors(unittest.TestCase):
             MQSimMediaSystem(
                 _cfg(workload_config_path="/missing/workload.xml")
             )
+
+    def test_incomplete_native_run_rejects_reported_iops(self):
+        """Generated-only XML IOPS is invalid if requests did not complete."""
+        from ..media.mqsim_wrapper.pymqsim import simulator
+
+        class IncompleteNative:
+            @staticmethod
+            def run_with_stats(*args):
+                return {
+                    "generated_request_count": 2,
+                    "serviced_request_count": 1,
+                }
+
+        with tempfile.TemporaryDirectory(prefix="mqsim_incomplete_") as tmp:
+            ssd = os.path.join(tmp, "input_ssd.xml")
+            workload = os.path.join(tmp, "input_workload.xml")
+            for path in (ssd, workload):
+                with open(path, "w", encoding="utf-8") as output:
+                    output.write("<root/>")
+
+            with mock.patch.object(
+                simulator, "_get_native", return_value=IncompleteNative()
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError, "generated=2, serviced=1"
+                ):
+                    simulator.run_simulation(
+                        ssd,
+                        workload,
+                        output_dir=os.path.join(tmp, "output"),
+                    )
 
 
 # ======================================================================

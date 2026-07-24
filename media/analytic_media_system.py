@@ -77,9 +77,6 @@ class AnalyticMediaSystem(BaseMediaSystem):
             num_media_reqs=len(mem_req_list),
             time=total_time,
             bandwidth=self._bandwidth_bytes_per_sec if total_time > 0 else 0.0,
-            iops=len(mem_req_list) / total_time if total_time > 0 else 0.0,
-            iops_read=num_read / total_time if total_time > 0 else 0.0,
-            iops_write=num_write / total_time if total_time > 0 else 0.0,
         )
 
         self.system_metrics.update_from_media(metrics)

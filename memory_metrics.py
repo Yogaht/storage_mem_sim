@@ -5,7 +5,7 @@ metrics structures for the MemoryEngine.
 """
 
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Optional
 
 
 @dataclass
@@ -20,8 +20,8 @@ class MemoryMetrics:
                          storage instance.
         global_memory_reqs_num: Total engine-level requests across all
                                 DP ranks and storage instances.
-        iops: Logical engine requests / time for this call.
-        backend_iops: IOPS reported by the media backend for this call.
+        iops: End-to-end device IOPS reported by MQSim, or None when the
+              selected backend does not provide this metric.
         bandwidth: Bandwidth in bytes/second (from media backend).
     """
     cycles: int = 0
@@ -29,15 +29,10 @@ class MemoryMetrics:
     memory_scale_factor: int = 1
     memory_reqs_num: int = 0
     global_memory_reqs_num: int = 0
-    global_memory_read_reqs_num: int = 0
-    global_memory_write_reqs_num: int = 0
     bandwidth: float = 0.0
-    iops: float = 0.0
-    iops_read: float = 0.0
-    iops_write: float = 0.0
-    backend_iops: float = 0.0
-    backend_iops_read: float = 0.0
-    backend_iops_write: float = 0.0
+    iops: Optional[float] = None
+    iops_read: Optional[float] = None
+    iops_write: Optional[float] = None
 
 @dataclass
 class MemoryEngineMetrics:
@@ -52,27 +47,20 @@ class MemoryEngineMetrics:
                          simulated storage instance.
         global_memory_reqs_num: Accumulated engine-level requests
                                 across all DP ranks and instances.
-        global_memory_read_reqs_num: Accumulated global logical reads.
-        global_memory_write_reqs_num: Accumulated global logical writes.
         mem_metrics_list: History of per-request MemoryMetrics.
         bandwidth: Cumulative bandwidth = total_bytes / total_time (B/s).
-        iops: Global logical engine requests / cumulative time.
-        backend_iops: Time-weighted IOPS reported by the media backend.
+        iops: Time-weighted end-to-end MQSim device IOPS, or None for
+              backends that do not report device IOPS.
     """
     cycles: int = 0
     total_time: float = 0.0
     total_bytes: int = 0
     memory_reqs_num: int = 0
     global_memory_reqs_num: int = 0
-    global_memory_read_reqs_num: int = 0
-    global_memory_write_reqs_num: int = 0
     bandwidth: float = 0.0
-    iops: float = 0.0
-    iops_read: float = 0.0
-    iops_write: float = 0.0
-    backend_iops: float = 0.0
-    backend_iops_read: float = 0.0
-    backend_iops_write: float = 0.0
+    iops: Optional[float] = None
+    iops_read: Optional[float] = None
+    iops_write: Optional[float] = None
     mem_metrics_list: List[MemoryMetrics] = field(default_factory=list)
 
     def update(self, metrics: MemoryMetrics, total_bytes: int):
@@ -84,8 +72,6 @@ class MemoryEngineMetrics:
         self.total_bytes += total_bytes
         self.memory_reqs_num += metrics.memory_reqs_num
         self.global_memory_reqs_num += metrics.global_memory_reqs_num
-        self.global_memory_read_reqs_num += metrics.global_memory_read_reqs_num
-        self.global_memory_write_reqs_num += metrics.global_memory_write_reqs_num
         self.mem_metrics_list.append(metrics)
 
         if self.total_time <= 0:
@@ -93,27 +79,34 @@ class MemoryEngineMetrics:
 
         # ---- bandwidth: total_bytes / total_time (exact, always works) ----
         self.bandwidth = self.total_bytes / self.total_time
-        # Engine IOPS uses one stable request level across all backends.
-        self.iops = self.global_memory_reqs_num / self.total_time
-        self.iops_read = self.global_memory_read_reqs_num / self.total_time
-        self.iops_write = self.global_memory_write_reqs_num / self.total_time
 
-        if old_time > 0:
-            old_weight = old_time / self.total_time
-            new_weight = metrics.total_time / self.total_time
-            self.backend_iops = (
-                self.backend_iops * old_weight
-                + metrics.backend_iops * new_weight
-            )
-            self.backend_iops_read = (
-                self.backend_iops_read * old_weight
-                + metrics.backend_iops_read * new_weight
-            )
-            self.backend_iops_write = (
-                self.backend_iops_write * old_weight
-                + metrics.backend_iops_write * new_weight
-            )
-        else:
-            self.backend_iops = metrics.backend_iops
-            self.backend_iops_read = metrics.backend_iops_read
-            self.backend_iops_write = metrics.backend_iops_write
+        # IOPS is intentionally MQSim-only.  The value is the end-to-end
+        # device rate reported for each simulation batch, so cumulative
+        # results must be weighted by the batch simulation time.
+        self.iops = self._combine_optional_rate(
+            self.iops, metrics.iops, old_time, metrics.total_time
+        )
+        self.iops_read = self._combine_optional_rate(
+            self.iops_read, metrics.iops_read, old_time, metrics.total_time
+        )
+        self.iops_write = self._combine_optional_rate(
+            self.iops_write, metrics.iops_write, old_time, metrics.total_time
+        )
+
+    @staticmethod
+    def _combine_optional_rate(
+        current: Optional[float],
+        incoming: Optional[float],
+        current_time: float,
+        incoming_time: float,
+    ) -> Optional[float]:
+        if incoming is None:
+            return current
+        if current is None or current_time <= 0:
+            return incoming
+        combined_time = current_time + incoming_time
+        if combined_time <= 0:
+            return incoming
+        return (
+            current * current_time + incoming * incoming_time
+        ) / combined_time

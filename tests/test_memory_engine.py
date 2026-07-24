@@ -167,53 +167,35 @@ class TestMemoryEngineMetrics(unittest.TestCase):
         self.assertEqual(em.bandwidth, 500.0)  # 1000 / 2.0
 
     def test_engine_metrics_iops_time_weighted(self):
-        """Engine and backend IOPS retain their distinct request levels."""
+        """MQSim device IOPS is time-weighted across simulation batches."""
         em = MemoryEngineMetrics()
-        # Batch 1: 100 global logical ops and 100 backend ops.
         m1 = MemoryMetrics(cycles=0, total_time=0.1, memory_reqs_num=1,
                            global_memory_reqs_num=100,
-                           global_memory_read_reqs_num=80,
-                           global_memory_write_reqs_num=20,
                            iops=1000.0, iops_read=800.0, iops_write=200.0,
-                           backend_iops=1000.0,
-                           backend_iops_read=700.0,
-                           backend_iops_write=300.0,
                            bandwidth=500.0)
         em.update(m1, total_bytes=50)
         self.assertEqual(em.iops, 1000.0)
         self.assertEqual(em.iops_read, 800.0)
         self.assertEqual(em.iops_write, 200.0)
-        self.assertEqual(em.backend_iops, 1000.0)
-        self.assertEqual(em.backend_iops_read, 700.0)
-        self.assertEqual(em.backend_iops_write, 300.0)
 
-        # Batch 2: another 100 ops over 0.2 seconds.
         m2 = MemoryMetrics(cycles=0, total_time=0.2, memory_reqs_num=1,
                            global_memory_reqs_num=100,
-                           global_memory_read_reqs_num=20,
-                           global_memory_write_reqs_num=80,
                            iops=500.0, iops_read=100.0, iops_write=400.0,
-                           backend_iops=500.0,
-                           backend_iops_read=200.0,
-                           backend_iops_write=300.0,
                            bandwidth=250.0)
         em.update(m2, total_bytes=50)
-        # Both levels happen to be 200 ops / 0.3s in this example.
         self.assertAlmostEqual(em.iops, 666.666, places=1)
         self.assertAlmostEqual(em.iops_read, 333.333, places=1)
         self.assertAlmostEqual(em.iops_write, 333.333, places=1)
-        self.assertAlmostEqual(em.backend_iops, 666.666, places=1)
-        self.assertAlmostEqual(em.backend_iops_read, 366.666, places=1)
-        self.assertAlmostEqual(em.backend_iops_write, 300.0, places=1)
 
-    def test_engine_metrics_iops_no_data_no_update(self):
-        """Logical IOPS is available even when a backend reports no IOPS."""
+    def test_engine_metrics_without_device_iops_remains_none(self):
+        """Analytic/Ramulator metrics do not synthesize logical IOPS."""
         em = MemoryEngineMetrics()
         m = MemoryMetrics(cycles=0, total_time=0.5, memory_reqs_num=1,
-                          global_memory_reqs_num=100, iops=0.0)
+                          global_memory_reqs_num=100)
         em.update(m, total_bytes=1000)
-        self.assertEqual(em.iops, 200.0)
-        self.assertEqual(em.backend_iops, 0.0)
+        self.assertIsNone(em.iops)
+        self.assertIsNone(em.iops_read)
+        self.assertIsNone(em.iops_write)
 
 
 # ------------------------------------------------------------------

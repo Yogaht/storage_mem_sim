@@ -167,15 +167,15 @@ MemoryMetrics (single issue_request result)
   ├── global_memory_reqs_num: int
   ├── bandwidth: float         ← B/s reported by backend
   ├── iops / iops_read / iops_write
-  │                              ← global logical engine request rates
-  └── backend_iops*            ← media/backend request rates
+  │                              ← MQSim end-to-end device rates;
+  │                                None for Analytic/Ramulator
 
 MemoryEngineMetrics (cumulative)
   ├── cycles / total_time / memory_reqs_num (accumulated)
   ├── mem_metrics_list: List[MemoryMetrics]
   ├── bandwidth: float         ← total simulated bytes / total time
-  ├── iops*                    ← global logical counts / total time
-  └── backend_iops*            ← time-weighted backend rates
+  └── iops*                    ← time-weighted MQSim device rates;
+                                 None for Analytic/Ramulator
 ```
 
 ---

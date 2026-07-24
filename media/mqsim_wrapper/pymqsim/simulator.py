@@ -88,6 +88,7 @@ def run_simulation(
     if hasattr(native, 'run_with_stats'):
         stats = native.run_with_stats(
             ssd_local, workload_xml_path, output_dir)
+        _validate_completed_requests(stats)
         ok = stats is not None
     else:
         ok = native.run(ssd_local, workload_xml_path, output_dir)
@@ -109,6 +110,28 @@ def run_simulation(
 # ------------------------------------------------------------------
 # helpers
 # ------------------------------------------------------------------
+
+def _validate_completed_requests(stats) -> None:
+    """Require every generated MQSim request to reach host completion.
+
+    MQSim calculates XML IOPS from generated requests and final simulator
+    time.  A partial run would therefore overstate completed end-to-end IOPS
+    unless generated and serviced counts are equal.
+    """
+    if stats is None:
+        return
+    generated = stats.get("generated_request_count")
+    serviced = stats.get("serviced_request_count")
+    if generated is None or serviced is None:
+        return
+    generated = int(generated)
+    serviced = int(serviced)
+    if generated != serviced:
+        raise RuntimeError(
+            "MQSim simulation ended with incomplete requests: "
+            f"generated={generated}, serviced={serviced}"
+        )
+
 
 def _copy_file(src: str, dst: str) -> None:
     d = os.path.dirname(dst)

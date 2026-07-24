@@ -227,35 +227,15 @@ class MemoryEngine:
                     sim_req_count = len(inst_reqs)
                     break
 
-        global_read_count = sum(
-            req.memory_object.req_type == MemoryRequestType.KREAD
-            for req in mem_reqs
-        )
-        global_write_count = sum(
-            req.memory_object.req_type == MemoryRequestType.KWRITE
-            for req in mem_reqs
-        )
-        total_time = total_media_metrics.time
         mem_metrics = MemoryMetrics(
             cycles=total_media_metrics.cycles,
-            total_time=total_time,
+            total_time=total_media_metrics.time,
             memory_reqs_num=sim_req_count,
             global_memory_reqs_num=len(mem_reqs),
-            global_memory_read_reqs_num=global_read_count,
-            global_memory_write_reqs_num=global_write_count,
             bandwidth=total_media_metrics.bandwidth,
-            iops=(
-                len(mem_reqs) / total_time if total_time > 0 else 0.0
-            ),
-            iops_read=(
-                global_read_count / total_time if total_time > 0 else 0.0
-            ),
-            iops_write=(
-                global_write_count / total_time if total_time > 0 else 0.0
-            ),
-            backend_iops=total_media_metrics.iops,
-            backend_iops_read=total_media_metrics.iops_read,
-            backend_iops_write=total_media_metrics.iops_write,
+            iops=total_media_metrics.iops,
+            iops_read=total_media_metrics.iops_read,
+            iops_write=total_media_metrics.iops_write,
         )
 
         self.engine_metrics.update(mem_metrics, simulated_bytes)

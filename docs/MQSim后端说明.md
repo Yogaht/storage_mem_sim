@@ -13,6 +13,13 @@ MemoryEngine.issue_request()
     └─ 4. 返回 MediaMetrics         → time, bandwidth, IOPS
 ```
 
+其中 `IOPS`、`IOPS_Read` 和 `IOPS_Write` 直接来自 MQSim 的
+`Host.IO_Flow` 输出，表示 trace 请求经过 NVMe queue、PCIe 和 SSD 内部路径后
+得到的端到端 device IOPS。它们不是 MemoryEngine logical request rate，也不是
+NAND 内部 page read/program transaction rate。仿真结束时 wrapper 会校验
+MQSim 的 generated request 数与 serviced request 数一致，避免把未完成请求
+计入 IOPS。
+
 ### MQSim trace 格式
 
 每行一条请求：`<arrival_ns> <device_id> <lba> <sectors> <req_type>`

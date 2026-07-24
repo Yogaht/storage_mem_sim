@@ -78,7 +78,7 @@ MediaSystemFactory -> BaseMediaSystem
 | `memory_type.py` | `MemoryType` 和 `MemoryRequestType`；介质读写编码固定为 read=0、write=1。注意 MQSim trace 自身使用 read=1、write=0，由 trace 层转换。 |
 | `memory_object.py` | 一个逻辑访问；记录 addr/size/type，并按 engine granularity 估算 `media_req_num`。实际介质请求数以 backend 返回值为准。 |
 | `memory_request.py` | 逻辑访问的轻量容器；可保存拆分后的 `MediaRequest`。 |
-| `memory_metrics.py` | Engine 单次与累计指标。累计平均带宽为“模拟实例传输字节数 / 累计时间”；累计 IOPS 当前使用全局 engine 请求数 / 时间。 |
+| `memory_metrics.py` | Engine 单次与累计指标。累计带宽为“模拟实例传输字节数 / 累计时间”；IOPS 只透传并按时间聚合 MQSim 的端到端 device IOPS，Analytic/Ramulator 为 `None`。 |
 | `media/base_media.py` | 后端抽象接口 `handler_mem_request(List[MemoryRequest]) -> MediaMetrics` 与后端累计指标。 |
 | `media/media_config.py` | 公共及 backend-specific 配置；保持公共字段的单位兼容性。 |
 | `media/media_system_factory.py` | 后端注册和惰性创建。新增后端应扩展 enum、实现类、注册逻辑和测试。 |
@@ -171,7 +171,7 @@ python -m pip install -e media/mqsim_wrapper
 - 多实例当前只模拟第一个非空分片，适用于同构、均衡、并行实例的代表性估计；不适用于异构实例或尾部不均衡的精确关键路径。
 - `MemoryObject.media_req_num` 是按 engine granularity 的估计；Ramulator 的实际覆盖数由对齐后的 transaction 分解决定，MQSim 还会合并和切片。
 - Analytic 配置写作 GB/s，但实现按 GiB/s (`1024**3`) 转换；报告时必须指出口径。
-- `MediaMetrics.__add__` 和 `MediaSystemMetrics.update_from_media()` 当前不会保留/累计全部 bandwidth 与 IOPS 字段；若依赖这些聚合值，应先明确正确统计口径并补测试。
+- MQSim XML 的 IOPS 是 trace 请求经过 NVMe/PCIe/SSD 路径后的端到端 device IOPS，不是 NAND 内部 page read/program transaction rate；Analytic 和 Ramulator 不提供 IOPS。
 - MQSim `handler_mem_request()` 会在 wrapper 的 `trace/` 下保留生成 trace/workload/output；不要把运行产物误当源码提交。
 - `configs/mqsim.json` 中的字段不一定都被 CLI 使用；新增或依赖字段前沿 `run.py -> MediaConfig -> backend` 路径确认实际生效。
 
