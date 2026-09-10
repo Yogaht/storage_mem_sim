@@ -5,6 +5,9 @@ __pycache__/
 *.dylib
 build/
 .DS_Store
+.claude/
+.vscode/
+output/
 
 # MQSim build artifacts
 media/mqsim_wrapper/build/
