@@ -1,0 +1,9 @@
+{
+    "mem_type": "HBM",
+    "media_config": {
+        "media_type": "analytic",
+        "capacity": 4.0,
+        "bandwidth": 400.0,
+        "instances": 4
+    }
+}

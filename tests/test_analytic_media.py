@@ -5,8 +5,7 @@ import sys
 import os
 
 from ..memory_type import MemoryType, MemoryRequestType
-from ..memory_config import MemoryEngineConfig
-from ..memory_object import MemoryObject
+from ..memory_engine import MemoryEngineConfig
 from ..memory_request import MemoryRequest
 from ..memory_engine import MemoryEngine
 from ..memory_metrics import MemoryMetrics, MemoryEngineMetrics
@@ -24,15 +23,14 @@ class TestAnalyticMediaSystem(unittest.TestCase):
     def setUp(self):
         self.media_config = MediaConfig(
             media_type=MediaSystemBackend.ANALYTIC,
-            bandwidth=100.0,  # 100 GB/s
+            bandwidth=100.0,  # 100 GiB/s
         )
         self.system = AnalyticMediaSystem(self.media_config)
         self.mem_config = MemoryEngineConfig(media_config=MediaConfig(media_type=MediaSystemBackend.ANALYTIC,bandwidth=100.0,capacity=1.0))
 
     def _make_memory_request(self, addr, size, req_type):
         """Helper: create a MemoryRequest for testing."""
-        obj = MemoryObject(addr, size, req_type, self.mem_config)
-        return MemoryRequest(memory_object=obj)
+        return MemoryRequest(addr, size, req_type, config=self.mem_config)
 
     def test_single_read(self):
         """Single read request produces valid metrics."""
@@ -106,13 +104,13 @@ class TestAnalyticMediaSystem(unittest.TestCase):
         """Higher bandwidth → lower access time."""
         req = self._make_memory_request(0, 100 * 1024**3, MemoryRequestType.KREAD)
 
-        # 100 GB/s
+        # 100 GiB/s
         sys_100 = AnalyticMediaSystem(
             MediaConfig(media_type=MediaSystemBackend.ANALYTIC, bandwidth=100.0)
         )
         m_100 = sys_100.handler_mem_request([req])
 
-        # 200 GB/s
+        # 200 GiB/s
         sys_200 = AnalyticMediaSystem(
             MediaConfig(media_type=MediaSystemBackend.ANALYTIC, bandwidth=200.0)
         )
@@ -132,6 +130,14 @@ class TestAnalyticMediaSystem(unittest.TestCase):
         self.assertIsNone(metrics.iops)
         self.assertIsNone(metrics.iops_read)
         self.assertIsNone(metrics.iops_write)
+
+    def test_bandwidth_bytes_per_sec(self):
+        """Bandwidth is converted from GiB/s to B/s."""
+        sys = AnalyticMediaSystem(MediaConfig(
+            media_type=MediaSystemBackend.ANALYTIC,
+            bandwidth=400.0,
+        ))
+        self.assertEqual(sys._bandwidth_bytes_per_sec, 400.0 * 1024 ** 3)
 
     def test_media_metrics_add_time_weights_rates(self):
         """Adding batches preserves rate fields instead of dropping them."""

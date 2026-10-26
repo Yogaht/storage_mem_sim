@@ -24,8 +24,8 @@ DRAM row 或 NAND page。完整 page 的有效数据量为：
 page_data_bytes = page_size_tokens * token_size_bytes
 ```
 
-第一版在 workload 层不排序、不合并请求，并假设
-`storage_instance_num=1`。Page 粒度对 page ID 去重是整页加载语义的一部分，
+第一版在 workload 层不排序、不合并请求，并假设单实例
+（多实例场景由 `MemoryPool` 表达）。Page 粒度对 page ID 去重是整页加载语义的一部分，
 不是相邻请求合并。请求提交到 `MemoryEngine` 后，backend 仍可按自己的既有
 配置执行 transaction 分解、trace 合并、切片或对齐；这些行为不由 workload
 修改或覆盖。
@@ -93,9 +93,10 @@ python -m storage_mem_sim.run \
 ```
 
 这个配置随机选择 32 个 page，每个 page 用 4 个 token 表达需求，最终生成
-32 条、每条 9216 B 的整页请求。CLI 通过 `MemoryEngine.get_tensor_addr()`
-为完整 KV region 分配 `base_addr`，因此 CLI workload JSON 中应省略
-`base_addr` 或将其设为 0。
+32 条、每条 9216 B 的整页请求。CLI 通过 `get_tensor_addr()` 为完整
+KV region 分配 `base_addr`（多实例走 `MemoryPool`，单实例走
+`MemoryEngine`），因此 CLI workload JSON 中应省略 `base_addr` 或将其
+设为 0。
 
 仓库提供了完整的访问模式和请求粒度组合：
 
@@ -159,7 +160,6 @@ token_size_bytes    = 576
 request_type        = KREAD
 page_alignment_bytes = 1
 seed                = 42（主结果；token 敏感性检查另行覆盖）
-DP                  = 1
 storage instances   = 1
 Ramulator tx_bytes  = 32
 ```
@@ -390,7 +390,6 @@ token_size_bytes     = 576
 request_type         = KREAD
 page_alignment_bytes = 1
 seed                 = 42（主结果；token 敏感性检查另行覆盖）
-DP                   = 1
 storage instances    = 1
 Ramulator tx_bytes   = 64
 RefreshManager       = AllBank

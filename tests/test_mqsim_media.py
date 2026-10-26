@@ -16,8 +16,7 @@ import sys
 from unittest import mock
 
 from ..memory_type import MemoryRequestType
-from ..memory_config import MemoryEngineConfig
-from ..memory_object import MemoryObject
+from ..memory_engine import MemoryEngineConfig
 from ..memory_request import MemoryRequest
 from ..media import MediaConfig, MediaSystemBackend, MQSimMediaSystem
 
@@ -28,8 +27,7 @@ from ..media import MediaConfig, MediaSystemBackend, MQSimMediaSystem
 
 def _req(addr, size, req_type):
     """Shortcut: create a MemoryRequest for testing."""
-    obj = MemoryObject(addr, size, req_type, MemoryEngineConfig())
-    return MemoryRequest(memory_object=obj)
+    return MemoryRequest(addr, size, req_type, config=MemoryEngineConfig())
 
 
 def _cfg(**kw):

@@ -3,7 +3,7 @@
 import pytest
 
 from ....media import MediaConfig, MediaSystemBackend
-from ....memory_config import MemoryEngineConfig
+from ....memory_engine import MemoryEngineConfig
 from ....memory_engine import MemoryEngine
 from ....memory_type import MemoryType
 from ....workload.kv_cache_load import (
@@ -40,7 +40,6 @@ def test_kv_workload_runs_through_native_ramulator(
                 media_type=MediaSystemBackend.RAMULATOR,
                 capacity=1.0,
             ),
-            storage_instance_num=1,
         )
     )
     generated = KVCacheLoadGenerator().generate(
@@ -59,7 +58,6 @@ def test_kv_workload_runs_through_native_ramulator(
     metrics = generated.issue(engine)
 
     assert metrics.memory_reqs_num == generated.stats.logical_requests
-    assert metrics.global_memory_reqs_num == generated.stats.logical_requests
     assert metrics.cycles > 0
     assert metrics.total_time > 0
     assert engine.get_engine_metrics().total_bytes == generated.stats.issued_bytes

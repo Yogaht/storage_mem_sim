@@ -10,7 +10,7 @@ MemEngine 是面向 LLM 推理服务的内存/存储介质仿真框架。它把 
 
 1. **上层语义与后端细节解耦**：调用者只使用 `MemoryEngine`、字节地址、字节大小和读写类型；DRAM transaction、SSD trace、XML/YAML 等细节留在 `media/`。
 2. **一套请求模型，多种精度**：优先用 Analytic 建立 roofline/数量级基线，再用 Ramulator2 或 MQSim 解释微架构效应。不同后端回答的问题不同，不能把低精度结果解释成周期级结论。
-3. **配置驱动而非硬编码**：容量、带宽、DP、实例数和器件组织来自配置。Ramulator transaction 大小和时钟由 DRAM spec 推导；MQSim NAND 几何从 SSD XML 加载。
+3. **配置驱动而非硬编码**：容量、带宽、实例数和器件组织来自配置。Ramulator transaction 大小和时钟由 DRAM spec 推导；MQSim NAND 几何从 SSD XML 加载。
 4. **单位必须显式**：公共地址和大小为 byte，容量配置为 GiB（实现使用 `1024**3`），Analytic 带宽配置为 GiB/s，内部带宽指标为 B/s，时间为 s，Ramulator 频率为 MHz，MQSim 延迟通常为 ns。
 5. **仿真假设必须可追溯**：性能结论必须同时记录 workload、后端、硬件配置、请求变换、合并/切片策略和指标口径，不能只报告一个最终数字。
 6. **后端适配层保持薄而可测**：公共生命周期在 engine；格式转换、运行和输出解析在后端 wrapper。扩展新后端时实现接口并注册工厂，不把后端分支散落进 engine。
@@ -45,55 +45,59 @@ KV-cache workload (optional)
         |
         | get_tensor_addr / issue_request
         v
-MemoryEngine
-  address allocation -> DP replication -> instance distribution
+MemoryPool (global address space, routing, placement)
         |
         v
-MemoryObject -> MemoryRequest
+MemoryEngine (single physical media instance)
+  local address allocation -> backend call
+        |
+        v
+MemoryRequest
         |
         v
 MediaSystemFactory -> BaseMediaSystem
         |                 |                 |
      Analytic         Ramulator2          MQSim
-  bytes/bandwidth   tx decomposition   merge/slice -> trace
+  batch: bytes/bw   tx decomposition   merge/slice -> trace
                     -> DRAM cycles     -> workload XML -> SSD sim
         |                 |                 |
         +---------- MediaMetrics -----------+
                           |
                           v
              MemoryMetrics / cumulative metrics
+                          |
+                          v
+        pool-level aggregation (time = max, bandwidth = Σbytes/max_time)
 ```
 
 一次 `issue_request(addr, size, req_type)` 的准确流程：
 
 1. 校验三个列表等长、地址非负、大小严格大于 0。
-2. 每个输入请求复制到所有 DP rank；rank 地址偏移为 `dp_rank * per_dp_capacity`。
-3. 复制后的请求按顺序 round-robin 分配到 storage instances。
-4. 多实例被建模为同构并行实例，当前实现只模拟第一个非空实例；其耗时代表实例关键路径，而 `global_memory_reqs_num` 保留全局请求数。不要误写成“模拟并累加所有实例”。
-5. 后端返回 `MediaMetrics`，engine 映射为单次 `MemoryMetrics` 并累积到 `MemoryEngineMetrics`。
+2. 逐个构造 `MemoryRequest`，统一交给 backend（多实例分发由 `MemoryPool` 负责）。
+3. 后端返回 `MediaMetrics`，engine 映射为单次 `MemoryMetrics` 并累积到 `MemoryEngineMetrics`。
+4. 多实例场景由 `MemoryPool` 管理：逐请求按窗口边界切分后路由到对应 instance，各 instance 并行执行，池级 `time = max`，`bandwidth = Σbytes / max_time`。
 
-地址分配也是模型状态：`get_tensor_addr()` 按 backend granularity 向上对齐，单调推进 `global_addr`，并以 `per_dp_capacity` 检查溢出；只有显式调用 `reset_addr()` 才归零。Engine 初始化后 granularity 对 Analytic/MQSim 通常为 64 B，对 Ramulator 为器件推导出的 `_tx_bytes`。
+地址分配也是模型状态：`get_tensor_addr()` 按 backend granularity 向上对齐，单调推进 `global_addr`，并以 `capacity_bytes` 检查溢出；只有显式调用 `reset_addr()` 才归零。Engine 初始化后 granularity 对 Analytic/MQSim 通常为 64 B，对 Ramulator 为器件推导出的 `_tx_bytes`。
 
 ## 模块职责
 
 | 模块 | 责任与关键约束 |
 | --- | --- |
-| `memory_engine.py` | 唯一的高层入口；地址分配、参数校验、DP 复制、实例分发、后端调用与累计指标。不要在此解析 YAML/XML 或实现器件时序。 |
-| `memory_config.py` | Engine 配置及容量派生：`total_capacity`、`per_dp_capacity`、每实例 `capacity`。`media_config` 应在构造时提供，避免构造后修改导致派生值过期。 |
+| `memory_engine.py` | `MemoryEngineConfig`（容量派生：单实例口径，`capacity` 单位为字节，`media_config` 应在构造时提供）与 `MemoryEngine`（单一物理介质实例：local 地址分配、参数校验、backend 调用、同步累计指标）。不要在此解析 YAML/XML 或实现多实例路由。 |
 | `memory_type.py` | `MemoryType` 和 `MemoryRequestType`；介质读写编码固定为 read=0、write=1。注意 MQSim trace 自身使用 read=1、write=0，由 trace 层转换。 |
-| `memory_object.py` | 一个逻辑访问；记录 addr/size/type，并按 engine granularity 估算 `media_req_num`。实际介质请求数以 backend 返回值为准。 |
-| `memory_request.py` | 逻辑访问的轻量容器；可保存拆分后的 `MediaRequest`。 |
-| `memory_metrics.py` | Engine 单次与累计指标。累计带宽为”模拟实例传输字节数 / 累计时间”；IOPS 只透传并按时间聚合 MQSim 的端到端 device IOPS，Analytic/Ramulator 为 `None`。 |
+| `memory_request.py` | 一个逻辑访问的轻量容器：记录 addr/size/type，并按 engine granularity 估算 `media_req_num`（实际介质请求数以 backend 返回值为准）；可保存拆分后的 `MediaRequest`。 |
+| `memory_metrics.py` | Engine 单次/累计指标。同步累计带宽为”模拟实例传输字节数 / 累计时间”；IOPS 只透传并按时间聚合 MQSim 的端到端 device IOPS。 |
+| `memory_pool/` | 多实例管理系统：`MemoryPoolConfig` 为统一配置入口（instance_count、memory_type；media_config 的 capacity 按总容量由 pool 整 GiB 整除、余数归最后实例，bandwidth 按总量在初始化时均分），pool 内部派生各 engine 配置；global 地址窗口、顺序全局打包分配（allocation 可跨界延伸）、global↔local 地址转换、池级同步 `issue_request`（跨界请求按窗口边界切分后路由，各实例并行取 max 时间，`bandwidth = Σbytes / max_time` 精确重算）。 |
 | `media/base_media.py` | 后端抽象接口 `handler_mem_request(List[MemoryRequest]) -> MediaMetrics` 与后端累计指标。 |
-| `media/media_config.py` | 公共及 backend-specific 配置；保持公共字段的单位兼容性。 |
+| `media/media_config.py` | 公共及 backend-specific 配置。保持公共字段的单位兼容性。 |
 | `media/media_system_factory.py` | 后端注册和惰性创建。新增后端应扩展 enum、实现类、注册逻辑和测试。 |
-| `media/analytic_media_system.py` | `sum(bytes) / configured bandwidth`；无排队、并发、固定延迟或地址效应，是吞吐上界基线。 |
+| `media/analytic_media_system.py` | `sum(bytes) / bandwidth`（bandwidth 配置按 GiB/s 转 B/s）。 |
 | `media/ramulator_media_system.py` | 读取 Ramulator YAML，推导 transaction bytes/频率，按覆盖的 transaction 边界拆请求，生成临时 LD/ST trace，组装并运行 Ramulator2。多 controller 周期取最大值。 |
 | `media/mqsim_media_system.py` | 协调 SSD XML 几何加载、trace 生成、workload XML 生成、native MQSim 执行与结果映射。 |
 | `media/mqsim_wrapper/pymqsim/trace.py` | byte address 到 LBA、相邻同类型请求合并、request-size 切片、CWDP 地址布局及理论上界公式。几何函数调用前必须加载 SSD XML。 |
 | `media/mqsim_wrapper/pymqsim/workload.py` | 用模板生成 workload XML，只负责替换 trace 路径。 |
 | `media/mqsim_wrapper/pymqsim/simulator.py` / `output.py` | native binding 调用、输出文件定位与指标解析。 |
-| `run.py` | JSON 驱动的示例/CLI；`--workload/-w` 加载 KV workload JSON，自动分配完整 KV region 后通过 engine 执行。相对配置路径按当前工作目录解析。 |
+| `run.py` | JSON 驱动的示例/CLI；`instances>1` 时创建 MemoryPool（capacity 按总容量解释，pool 按整 GiB 整除、余数归最后实例）；`--workload/-w` 加载 KV workload JSON。相对配置路径按当前工作目录解析。 |
 
 ## KV cache load workload
 
@@ -116,7 +120,7 @@ workload 修改 `media/` 默认行为。
   对齐 padding 只影响地址间距，page 粒度请求大小仍为 `page_data_bytes`。
 - `KVPageLayout.required_region_size()` 按完整软件 page 分配 context region；
   CLI workload JSON 中 `base_addr` 必须省略或为 0，由 `run.py` 调用
-  `MemoryEngine.get_tensor_addr()` 分配。
+  `get_tensor_addr()` 分配（多实例为 `MemoryPool`，单实例为 `MemoryEngine`）。
 
 ### Pattern 与加载粒度
 
@@ -160,15 +164,16 @@ python -m storage_mem_sim.run \
   -w storage_mem_sim/configs/workloads/kv_sparse_page.json
 ```
 
-`--workload` 不能与通用负载参数 `--num-requests`、`--size` 同时使用。当前
-CLI 明确要求 `storage_instance_num=1`；程序化使用也应维持单 instance 假设，
-除非后续任务明确设计多 instance workload 语义。
+`--workload` 不能与通用负载参数 `--num-requests`、`--size` 同时使用。
+CLI 默认为单实例；`instances>1` 时自动创建 `MemoryPool`，
+KV workload 通过 Pool 的 global 地址空间分配并提交。程序化使用中
+单实例直接使用 `MemoryEngine`，多实例使用 `MemoryPool`。
 
 ## 后端选择与分析方法
 
 ### 1. 先定义问题和 workload
 
-记录内存类型、读写比例、请求数量、单请求大小、地址连续性/步长、总字节数、DP、实例数、容量和预期并行度。任何对比都应固定这些条件，除非它们本身是实验变量。
+记录内存类型、读写比例、请求数量、单请求大小、地址连续性/步长、总字节数、实例数、容量和预期并行度。任何对比都应固定这些条件，除非它们本身是实验变量。
 
 ### 2. 用 Analytic 建立基线
 
@@ -186,7 +191,7 @@ CLI 明确要求 `storage_instance_num=1`；程序化使用也应维持单 insta
 - MQSim 的 engine 请求数、合并后 chunk 数和 trace 行数是不同层级，不应混用。
 - 请求大小变化时：固定总字节看 IOPS/带宽转换；固定请求数看总负载变化。
 - 地址模式变化时：连续、固定 stride、随机、热点分别测试。
-- DP/实例变化时同时报告局部与全局请求数，并牢记当前“只模拟一个同构实例”的假设。
+- 实例数变化时同时报告池级聚合结果与各实例请求数，并牢记池级并行是“各实例独立、池级时间取 max”的建模假设。
 - 对高精度结果至少做一次极小 trace 的手算或 direct-backend 对照；Ramulator 已有 wrapper-vs-direct integration tests。
 
 ### 5. 报告结论
@@ -210,9 +215,11 @@ CLI 明确要求 `storage_instance_num=1`；程序化使用也应维持单 insta
 在仓库父目录运行包级命令最稳妥：
 
 ```bash
-cd ..
 python -m pytest storage_mem_sim/tests
+python -m pytest storage_mem_sim/tests/workload/kv_cache_load
+python -m pytest storage_mem_sim/tests/test_memory_pool.py              # 池路由与聚合
 python -m storage_mem_sim.run -c storage_mem_sim/configs/analytic.json
+python -m storage_mem_sim.run -c storage_mem_sim/configs/analytic_pool.json     # 池同步路径
 ```
 
 也可在仓库根目录执行 `python -m pytest`；测试使用相对导入，环境需能把仓库作为 package 解析。开发依赖：
@@ -251,9 +258,9 @@ python -m pytest tests/workload/kv_cache_load -m mqsim_native
 
 - 仓库目录名是 `storage_mem_sim`，但发行包名是 `memengine`；源码使用相对导入，示例通常通过 `python -m storage_mem_sim.run` 从父目录运行。
 - `MemoryEngineConfig` 的容量字段在 `__post_init__` 派生。构造后再赋 `media_config` 不会自动重算容量。
-- 多实例当前只模拟第一个非空分片，适用于同构、均衡、并行实例的代表性估计；不适用于异构实例或尾部不均衡的精确关键路径。
-- `MemoryObject.media_req_num` 是按 engine granularity 的估计；Ramulator 的实际覆盖数由对齐后的 transaction 分解决定，MQSim 还会合并和切片。
-- Analytic 配置写作 GB/s，但实现按 GiB/s (`1024**3`) 转换；报告时必须指出口径。
+- 多实例池假设各实例同构、独立、并行：池级 `time` 取各实例最大值，适用于均衡负载的代表性估计；不适用于异构实例或跨实例带宽共享的精确关键路径。
+- `MemoryRequest.media_req_num` 是按 engine granularity 的估计；Ramulator 的实际覆盖数由对齐后的 transaction 分解决定，MQSim 还会合并和切片。
+- Analytic 的 `bandwidth` 按 GiB/s（`1024**3`）解释；报告时须注明口径（CLI 结果行按十进制 GB/s 打印，与配置口径不同）。
 - MQSim XML 的 IOPS 是 trace 请求经过 NVMe/PCIe/SSD 路径后的端到端 device IOPS，不是 NAND 内部 page read/program transaction rate；Analytic 和 Ramulator 不提供 IOPS。
 - MQSim `handler_mem_request()` 会在 wrapper 的 `trace/` 下保留生成 trace/workload/output；不要把运行产物误当源码提交。
 - `configs/mqsim.json` 中的字段不一定都被 CLI 使用；新增或依赖字段前沿 `run.py -> MediaConfig -> backend` 路径确认实际生效。
@@ -262,10 +269,14 @@ python -m pytest tests/workload/kv_cache_load -m mqsim_native
 - `page_data_bytes` 是单个软件 page 的有效数据量；本次 page 请求总字节数是 `unique_pages * page_data_bytes`，不要把它误写成整个 workload 的 page 大小。
 - workload 的“不合并”只约束 generator 输出。MQSim 是否继续合并由 `configs/mqsim.json` 的 `merge_contiguous` 决定，trace slice size 由同一配置的 `request_size` 决定。
 - KV CLI 状态栏中的 `Trace slice` 是 MQSim backend 参数；实际 KV 请求数以结果区的 `Requests`/`GeneratedKVCacheLoad.stats.logical_requests` 为准。
+- `MemoryEngineConfig` 的容量为**单实例口径**（`capacity`，字节）。`MemoryPoolConfig.media_config` 的 `capacity` 与 `bandwidth` 均为**总量**口径：capacity 由 pool 构建时按整 GiB 整除（余数归最后一个实例，第一个实例容量小于地址对齐粒度——即份额不足 1 GiB——时抛中文 `ValueError`）；bandwidth 在 config 初始化时 ÷instances 均分（只影响 Analytic；Ramulator/MQSim 的带宽由器件/仿真决定），N 实例各得 bandwidth/N 并行执行，聚合峰值 = 配置带宽。
+- 池级 `issue_request` 的 `time` 取各实例最大值，`bandwidth = Σbytes / max_time`（精确重算），`iops` = 各实例非 None 值的平均（IOPS 是单实例设备属性，不求和；全 None 则 None）。
+- 池成员 engine 不得单独调用 `reset_addr()` 或 `get_tensor_addr()`：池的全局水位是各 engine 水位之和，绕开 pool 会破坏打包不变量（静默地址复用或 invariant 报错）。池级重置统一用 `MemoryPool.reset_addr()`。
 
 ## 相关文档
 
 - `README.md`：安装和快速运行入口。
+- `docs/multi_instance_design.md`：多实例地址空间、分配策略与 pool/engine 职责划分的设计文档。
 - `docs/design.md`：较详细的架构背景；可能落后于实现，使用时与本文件和源码核对。
 - `docs/kv_cache_load_workload.md`：KV workload 的 pattern、token/page 粒度、JSON 配置、统计口径和 backend 边界。
 - `docs/ramulator_config.md`：Ramulator 配置说明。
@@ -276,7 +287,7 @@ python -m pytest tests/workload/kv_cache_load -m mqsim_native
 ## 修改完成前检查
 
 1. 变更是否尊重 engine/media/wrapper 的职责边界？
-2. 单位、请求层级、DP/实例和并行假设是否写清？
+2. 单位、请求层级、实例数和并行假设是否写清？
 3. 是否只改了自研源码，且保留了用户已有变更？
 4. 是否覆盖正常、空输入、边界、未对齐和无效配置？
 5. 高精度后端测试是真正运行还是因依赖缺失跳过？

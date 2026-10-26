@@ -5,7 +5,7 @@ import pytest
 from ....media import MediaConfig, MediaSystemBackend
 from ....media import mqsim_media_system
 from ....media.mqsim_wrapper.pymqsim import check_mqsim_available
-from ....memory_config import MemoryEngineConfig
+from ....memory_engine import MemoryEngineConfig
 from ....memory_engine import MemoryEngine
 from ....memory_type import MemoryType
 from ....workload.kv_cache_load import (
@@ -51,7 +51,6 @@ def test_kv_workload_runs_through_native_mqsim(
                 capacity=1.0,
                 request_size_bytes=131072,
             ),
-            storage_instance_num=1,
         )
     )
     generated = KVCacheLoadGenerator().generate(
@@ -70,7 +69,6 @@ def test_kv_workload_runs_through_native_mqsim(
     metrics = generated.issue(engine)
 
     assert metrics.memory_reqs_num == generated.stats.logical_requests
-    assert metrics.global_memory_reqs_num == generated.stats.logical_requests
     assert metrics.total_time > 0
     assert metrics.bandwidth > 0
     assert metrics.iops > 0

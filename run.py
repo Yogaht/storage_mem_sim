@@ -2,8 +2,9 @@
 
 Usage:
     python -m storage_mem_sim.run -c configs/analytic.json
-    python -m storage_mem_sim.run -c configs/analytic.json \
+    python -m storage_mem_sim.run -c configs/analytic.json \\
         -w configs/workloads/kv_sparse_page.json
+    python -m storage_mem_sim.run -c configs/analytic_pool.json
     python run.py -c configs/ramulator.json
 """
 
@@ -32,9 +33,9 @@ def parse_args(argv=None):
 
 def main(argv=None):
     from .media import MediaConfig, MediaSystemBackend
-    from .memory_engine import MemoryEngine
-    from .memory_config import MemoryEngineConfig
+    from .memory_engine import MemoryEngine, MemoryEngineConfig
     from .memory_type import MemoryRequestType, MemoryType
+    from .memory_pool import MemoryPool, MemoryPoolConfig
     from .workload.kv_cache_load import (
         KVCacheLoadGenerator,
         KVPageLayout,
@@ -42,7 +43,6 @@ def main(argv=None):
     )
 
     args = parse_args(argv)
-
     if args.workload and (
         args.num_requests is not None or args.size is not None
     ):
@@ -67,9 +67,14 @@ def main(argv=None):
 
     # ---- common params (with CLI overrides) ----
     num_requests = args.num_requests or mc.get("num_requests", 64)
-    request_size = args.size or mc.get("request_size", 512*8)
+    request_size = args.size or mc.get("request_size", 512 * 8)
+
+    # ---- pool settings (optional) ----
+    instances = mc.get("instances", 1)
 
     # ---- build MediaConfig ----
+    # instances > 1 时 capacity 按总容量解释，MemoryPool 按整 GiB 整除、
+    # 余数归最后一个实例。
     media_cfg = MediaConfig(
         media_type=backend,
         capacity=mc.get("capacity", 32.0),
@@ -82,17 +87,27 @@ def main(argv=None):
         merge_contiguous=mc.get("merge_contiguous", True),
     )
 
-    engine = MemoryEngine(MemoryEngineConfig(
-        memory_type=mem_type,
-        media_config=media_cfg,
-        dp_size=mc.get("dp", 1),
-        storage_instance_num=mc.get("instances", 1),
-    ))
+    # ---- build engine or pool ----
+    use_pool = instances > 1
+    if use_pool:
+        pool = MemoryPool(MemoryPoolConfig(
+            instance_count=instances,
+            memory_type=mem_type,
+            media_config=media_cfg,
+        ))
+        engine = pool.instances[0]
+        ms = engine.media_system
+        tx_bytes = getattr(ms, '_tx_bytes', request_size)
+    else:
+        pool = None
+        engine = MemoryEngine(MemoryEngineConfig(
+            memory_type=mem_type,
+            media_config=media_cfg,
+        ))
+        ms = engine.media_system
+        tx_bytes = getattr(ms, '_tx_bytes', request_size)
 
-    ms = engine.media_system
-    tx_bytes = getattr(ms, '_tx_bytes', request_size)
-
-    # ---- MQSim trace config: override request_size per scenario ----
+    # MQSim trace config: override request_size per scenario
     if backend == MediaSystemBackend.MQSIM:
         ms.trace_config.request_size = request_size
 
@@ -100,16 +115,11 @@ def main(argv=None):
     generated_workload = None
     workload_cfg = None
     if args.workload:
-        if engine.mem_config.storage_instance_num != 1:
-            raise ValueError(
-                "KV-cache workload currently requires "
-                "storage_instance_num=1"
-            )
         workload_cfg = load_kv_cache_load_config(args.workload)
         if workload_cfg.base_addr != 0:
             raise ValueError(
                 "base_addr must be omitted or zero in a CLI workload config; "
-                "run.py allocates the KV region through MemoryEngine"
+                "run.py allocates the KV region"
             )
         region_size = KVPageLayout.required_region_size(
             context_tokens=workload_cfg.context_tokens,
@@ -117,7 +127,19 @@ def main(argv=None):
             page_size_tokens=workload_cfg.page_size_tokens,
             page_alignment_bytes=workload_cfg.page_alignment_bytes,
         )
-        base_addr = engine.get_tensor_addr(region_size)
+        if use_pool and region_size > pool.total_capacity_bytes:
+            raise ValueError(
+                f"KV region requires {region_size / (1024 ** 3):.2f} GiB but "
+                f"the pool only has "
+                f"{pool.total_capacity_bytes / (1024 ** 3):.1f} GiB in total "
+                f"({instances} instances)."
+            )
+
+        if use_pool:
+            base_addr = pool.get_tensor_addr(region_size)
+        else:
+            base_addr = engine.get_tensor_addr(region_size)
+
         workload_cfg = replace(workload_cfg, base_addr=base_addr)
         generated_workload = KVCacheLoadGenerator().generate(workload_cfg)
 
@@ -146,9 +168,25 @@ def main(argv=None):
             if not ms.mqsim_available:
                 print(f"  Build: cd media/mqsim_wrapper && pip install -e .")
     else:
-        print(f"Bandwidth:  {mc.get('bandwidth', 100.0)} GB/s")
-    print(f"Capacity:   {mc.get('capacity', 32.0)} GB  |  "
-          f"DP: {mc.get('dp', 1)}  |  Inst: {mc.get('instances', 1)}")
+        bw = mc.get('bandwidth', 100.0)
+        if use_pool:
+            print(f"Bandwidth:  {bw} GiB/s total  |  "
+                  f"{bw / instances:.2f} GiB/s x {instances} instances")
+        else:
+            print(f"Bandwidth:  {bw} GiB/s")
+
+    capacity_gib = mc.get('capacity', 32.0)
+    if use_pool:
+        total_gib = pool.total_capacity_bytes / (1024 ** 3)
+        base_gib = pool.instances[0].capacity_bytes / (1024 ** 3)
+        last_gib = pool.instances[-1].capacity_bytes / (1024 ** 3)
+        if last_gib != base_gib:
+            per = f"{base_gib:g} GiB x {instances - 1} + {last_gib:g} GiB x 1"
+        else:
+            per = f"{base_gib:g} GiB x {instances}"
+        print(f"Capacity:   {total_gib:g} GiB total  |  {per}")
+    else:
+        print(f"Capacity:   {capacity_gib} GiB  |  Inst: {instances}")
     if generated_workload is not None:
         print("Workload:   kv_cache_load")
         print(f"Pattern:    {workload_cfg.pattern.value}")
@@ -160,12 +198,19 @@ def main(argv=None):
 
     # ---- issue requests ----
     if generated_workload is not None:
-        metrics = generated_workload.issue(engine)
+        metrics = generated_workload.issue(pool if use_pool else engine)
     else:
-        addr = engine.get_tensor_addr(num_requests * request_size)
-        addrs = [addr + i * request_size for i in range(num_requests)]
+        if use_pool:
+            addrs = [
+                pool.get_tensor_addr(request_size)
+                for _ in range(num_requests)
+            ]
+        else:
+            addr = engine.get_tensor_addr(num_requests * request_size)
+            addrs = [addr + i * request_size for i in range(num_requests)]
 
-        metrics = engine.issue_request(
+        target = pool if use_pool else engine
+        metrics = target.issue_request(
             addrs,
             [request_size] * num_requests,
             [MemoryRequestType.KREAD] * num_requests,
@@ -176,18 +221,17 @@ def main(argv=None):
         stats = generated_workload.stats
         print(f"Tokens:    {stats.selected_tokens}")
         print(f"Pages:     {stats.unique_pages}")
-        print(f"Requests:  {stats.logical_requests} "
-              f"(global: {metrics.global_memory_reqs_num})")
+        print(f"Requests:  {stats.logical_requests}")
         print(f"Demand:    {stats.demand_bytes} B")
         print(f"Issued:    {stats.issued_bytes} B")
     else:
         print(f"Requests:  {num_requests} × {request_size}B → "
-              f"{metrics.memory_reqs_num} memory reqs "
-              f"(global: {metrics.global_memory_reqs_num})")
+              f"{metrics.memory_reqs_num} memory reqs")
     if backend == MediaSystemBackend.RAMULATOR:
         print(f"Cycles:    {metrics.cycles}")
     print(f"Time:      {metrics.total_time * 1e9:.1f} ns")
-    print(f"Bandwidth: {engine.get_engine_metrics().bandwidth / 1e9:.2f} GB/s")
+    # 结果带宽按十进制 GB/s（1e9）打印；配置口径为 GiB/s（1024**3）。
+    print(f"Bandwidth: {metrics.bandwidth / 1e9:.2f} GB/s")
 
     print("=" * 60)
 

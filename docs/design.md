@@ -6,7 +6,7 @@
 
 - **Address space management** — monotonic global address allocation with alignment
 - **Request construction** — decomposition of high-level memory objects into media-level requests
-- **Request transformation** — multi-DP (Data Parallel) and multi-storage-instance distribution
+- **Multi-instance routing** — provided by `MemoryPool` on top of single-instance `MemoryEngine`
 - **Multi-backend simulation** — pluggable backends for different fidelity/performance trade-offs
 
 ### Architecture Diagram
@@ -20,12 +20,12 @@
                        ▼
 ┌─────────────────────────────────────────────────────────────┐
 │               MemoryEngine (memengine/)                      │
-│  ┌───────────┐  ┌──────────────┐  ┌──────────────────────┐ │
-│  │ Address    │  │ Request      │  │ Request Transform    │ │
-│  │ Allocation │  │ Construction │  │ (DP/Instance Dist.)  │ │
-│  └───────────┘  └──────────────┘  └──────────┬───────────┘ │
-│                                               │             │
-│  MemoryObject ← MemoryRequest ← MediaRequest  │             │
+│  ┌───────────┐  ┌──────────────┐                            │
+│  │ Address    │  │ Request      │                            │
+│  │ Allocation │  │ Construction │                            │
+│  └───────────┘  └──────────────┘                            │
+│                                                             │
+│  MemoryRequest → MediaRequest                               │
 │  └─────────────────────────────────────────────┘            │
 │                      │ handler_mem_request                   │
 └──────────────────────┼──────────────────────────────────────┘
@@ -57,14 +57,16 @@
 
 ```
 storage_mem_sim/
-├── memengine/                    # Memory Engine (root level)
+├── memory_engine.py              # Engine config + main engine class
+├── memory_request.py             # Engine-level request
+├── memory_type.py                # Enums (MemoryType, RequestType)
+├── memory_metrics.py             # Metrics containers
+├── memory_pool/                  # Multi-instance pool
 │   ├── __init__.py
-│   ├── memory_engine.py          # Main engine class
-│   ├── memory_object.py          # Memory object data structure
-│   ├── memory_request.py         # Engine-level request
-│   ├── memory_type.py            # Enums (MemoryType, RequestType)
-│   ├── memory_config.py          # Engine configuration
-│   └── memory_metrics.py         # Metrics containers
+│   └── memory_pool.py            # MemoryPoolConfig + MemoryPool
+├── run.py                        # JSON-driven CLI
+├── workload/                     # High-level workloads
+│   └── kv_cache_load/            # KV cache load generator
 ├── media/                        # Media System layer
 │   ├── __init__.py
 │   ├── base_media.py             # Abstract base class
@@ -76,20 +78,14 @@ storage_mem_sim/
 │   ├── analytic_media_system.py  # Analytic backend
 │   ├── ramulator_media_system.py # Ramulator2 backend
 │   ├── mqsim_media_system.py     # MQSim backend
-│   ├── ramulator_wrapper/         # Ramulator2 integration
-│   │   ├── ramulator2/            #   Git submodule (v2.1 branch)
-│   │   ├── setup.py               #   pybind11 build script
-│   │   └── ramulator_binding.cpp  #   pybind11 binding code
-│   └── mqsim_wrapper/             # MQSim integration
-│       ├── MQSim/                 #   Git submodule
-│       ├── setup.py               #   pybind11 build script
-│       └── adapter_pybind.cpp     #   pybind11 binding code
+│   ├── ramulator_wrapper/        # Ramulator2 integration (submodule + pybind11)
+│   └── mqsim_wrapper/            # MQSim integration (submodule + pybind11 + pymqsim)
+├── configs/                      # Example configs (JSON / YAML / XML)
 ├── docs/                         # Documentation
-│   └── design.md
 └── tests/                        # Test cases
-    ├── __init__.py
     ├── test_memory_engine.py
-    ├── test_memory_object.py
+    ├── test_memory_request.py
+    ├── test_memory_pool.py
     ├── test_analytic_media.py
     ├── test_ramulator_media.py
     └── test_mqsim_media.py
@@ -101,26 +97,23 @@ storage_mem_sim/
 
 ### 4.1 Address Space Management
 
-`MemoryEngine` maintains a monotonically increasing `global_addr` for simulating global virtual/physical addresses. Each tensor allocation returns an aligned base address:
+`MemoryEngine` maintains a monotonically increasing local allocation water level `global_addr`; addresses are local to the instance. A global address space exists only at the `MemoryPool` level (global = instance `global_base` + local). Each tensor allocation returns an aligned base address:
 
 ```python
 def get_tensor_addr(self, size: int) -> int:
     # Align to granularity (default 64B / cache line)
-    # Check against per_dp_capacity
+    # Check against mem_config.capacity
     # Return start_addr
 ```
 
 - **Alignment granularity**: configurable, default 64 bytes (cache line)
-- **Capacity check**: raises `OverflowError` if `global_addr > per_dp_capacity`
+- **Capacity check**: raises `OverflowError` if `global_addr > mem_config.capacity`
 
 ### 4.2 Request Construction Flow
 
 ```
 issue_request(addr, size, req_type)
-  → Request transformation (multi-DP / multi-storage-instance)
-  → create_request(addr, size, req_type) for each
-    → MemoryObject(addr, size, req_type, config)
-    → MemoryRequest(memory_object)
+  → MemoryRequest(addr, size, req_type, config)
   → media_system.handler_mem_request(mem_reqs)
   → MemoryMetrics returned
 ```
@@ -129,19 +122,21 @@ issue_request(addr, size, req_type)
 
 | Structure | File | Purpose |
 |-----------|------|---------|
-| `MemoryObject` | `memory_object.py` | Wraps addr, size, req_type; computes `media_req_num = ceil(size/granularity)` |
-| `MemoryRequest` | `memory_request.py` | Holds a MemoryObject; maintains `media_request_list: List[MediaRequest]` |
+| `MemoryRequest` | `memory_request.py` | One logical access: addr, size, req_type; estimates `media_req_num = ceil(size/granularity)`; maintains `media_request_list: List[MediaRequest]` |
 | `MediaRequest` | `media/media_request.py` | Media-level request with addr, addr_vec, req_type (0=Read, 1=Write) |
 
-### 4.4 Multi-DP / Multi-Storage-Instance Transformation
+### 4.4 Single-Instance Semantics / Multi-Instance Routing
 
-When `dp_size > 1` or `storage_instance_num > 1`:
+`MemoryEngine` models exactly one physical media instance: requests are passed
+to the backend as-is, with no DP replication and no instance fan-out.
 
-1. DP0's request is replicated `dp_size` times
-2. Requests are evenly distributed across `storage_instance_num` instances
-3. Each DP rank within each instance has its own address range
+Multi-instance semantics are expressed by `memory_pool.MemoryPool`:
 
-When `dp_size = 1` and `storage_instance_num = 1`, behavior is the identity transform.
+1. The pool owns a global address space partitioned into per-instance windows.
+2. Each request is split at window boundaries; every fragment is routed to
+   the owning instance's `MemoryEngine` (global→local address translation).
+3. Instances execute in parallel; pool-level `time = max(per-instance time)`
+   and `bandwidth = total_bytes / max_time`.
 
 ### 4.5 Configuration
 
@@ -149,11 +144,9 @@ When `dp_size = 1` and `storage_instance_num = 1`, behavior is the identity tran
 class MemoryEngineConfig:
     memory_type: MemoryType          # HBM / DDR / SSD
     media_config: MediaConfig        # Media layer config
-    granularity: int = 64            # Address alignment / split granularity (bytes)
-    dp_size: int = 1                 # Data parallel degree
-    storage_instance_num: int = 1    # Number of storage instances
-    per_dp_capacity: int             # Capacity per DP rank (bytes)
-    capacity: int                    # Current storage instance capacity (bytes)
+    granularity: int                 # init=False; derived from backend at engine init
+                                     # (Analytic/MQSim: 64 B, Ramulator: _tx_bytes)
+    capacity: int                    # Instance capacity (bytes), derived from media_config.capacity
 ```
 
 ### 4.6 Metrics
@@ -162,13 +155,12 @@ class MemoryEngineConfig:
 MemoryMetrics (single issue_request result)
   ├── cycles: int              ← from MediaMetrics
   ├── total_time: float        ← from MediaMetrics
-  ├── memory_scale_factor: int
-  ├── memory_reqs_num: int     ← logical requests in simulated instance
-  ├── global_memory_reqs_num: int
+  ├── memory_reqs_num: int     ← engine-level (fragment) request count
   ├── bandwidth: float         ← B/s reported by backend
   ├── iops / iops_read / iops_write
   │                              ← MQSim end-to-end device rates;
-  │                                None for Analytic/Ramulator
+  │                                None for Analytic/Ramulator;
+  │                                pool: mean across instances
 
 MemoryEngineMetrics (cumulative)
   ├── cycles / total_time / memory_reqs_num (accumulated)
@@ -199,8 +191,8 @@ class MediaConfig:
     media_type: MediaSystemBackend   # RAMULATOR / MQSIM / ANALYTIC
     config_path: str                 # Backend config file path (YAML or XML)
     granularity: int = 64            # Access granularity (bytes)
-    capacity: float                  # Capacity in GB
-    bandwidth: float                 # Bandwidth in GB/s (Analytic backend)
+    capacity: float                  # Capacity in GiB (total across instances for MemoryPoolConfig)
+    bandwidth: float                 # Bandwidth in GiB/s (Analytic backend)
     scale_factor: float              # Cycles → time conversion factor
 ```
 
@@ -244,9 +236,9 @@ Pure analytical model: `total_time = Σ (size / bandwidth)`. No cycle-level simu
 ```python
 class AnalyticMediaSystem(BaseMediaSystem):
     def handler_mem_request(self, mem_req_list):
-        total_time = sum(
-            req.memory_object.size / (self.bandwidth * 1024**3)
-            for req in mem_req_list
+        total_time = (
+            sum(req.size for req in mem_req_list)
+            / self._bandwidth_bytes_per_sec  # bandwidth (GiB/s) * 1024**3
         )
         return MediaMetrics(time=total_time)
 ```
@@ -274,7 +266,7 @@ Integrates MQSim via C++ pybind11 extension (`mqsim_backend` module).
 4. Estimate time: `total_time = total_bytes / bandwidth_bps`
 5. Return `MediaMetrics(time)` (no cycles)
 
-**Build:** `cd media/mq_sim_wrapper && pip install -e .`
+**Build:** `cd media/mqsim_wrapper && pip install -e .`
 
 **Key Config:**
 | Key | Meaning |
@@ -296,9 +288,7 @@ Integrates MQSim via C++ pybind11 extension (`mqsim_backend` module).
       ▼
   MemoryEngine
       │  align_up(size) → granularity (64B) alignment
-      │  MemoryObject(addr, size, type) → media_req_num = size/64
-      │  MemoryRequest(MemoryObject)
-      │  If dp>1 or instance>1: replicate + distribute
+      │  MemoryRequest(addr, size, type, config) → media_req_num = size/64
       ▼
   MediaSystem.handler_mem_request(List[MemoryRequest])
       │

@@ -53,4 +53,7 @@ python -m storage_mem_sim.run -c storage_mem_sim/configs/mqsim.json --num-reques
 
 # 8. MQSim IOPS bound（不合并 + 小 I/O）
 python -m storage_mem_sim.run -c storage_mem_sim/configs/mqsim.json --num-requests 1024 --size 4096
+
+# 9. 多实例 Analytic 池（4 GiB 流量顺序打包，跨窗口分发到全部 4 个实例）
+python -m storage_mem_sim.run -c storage_mem_sim/configs/analytic_pool.json --num-requests 32768 --size 131072
 ```

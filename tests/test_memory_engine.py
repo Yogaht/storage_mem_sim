@@ -6,13 +6,14 @@ import os
 import tempfile
 
 from ..memory_type import MemoryType, MemoryRequestType
-from ..memory_config import MemoryEngineConfig
-from ..memory_object import MemoryObject
+from ..memory_engine import MemoryEngineConfig
 from ..memory_request import MemoryRequest
 from ..memory_engine import MemoryEngine
 from ..memory_metrics import MemoryMetrics, MemoryEngineMetrics
 from ..media import (
+    BaseMediaSystem,
     MediaConfig,
+    MediaMetrics,
     MediaSystemBackend,
 )
 
@@ -25,7 +26,7 @@ class TestMemoryEngineAddressAllocation(unittest.TestCase):
             memory_type=MemoryType.HBM,
             media_config=MediaConfig(
                 media_type=MediaSystemBackend.ANALYTIC,
-                capacity=1.0,  # 1 GB → per_dp_capacity = 1GB
+                capacity=1.0,  # 1 GB → capacity = 1GB
                 bandwidth=100.0,
             ),
         ))
@@ -53,7 +54,7 @@ class TestMemoryEngineAddressAllocation(unittest.TestCase):
         self.assertEqual(addr2, self.engine.align_up(100))
 
     def test_capacity_overflow(self):
-        cap = self.engine.mem_config.per_dp_capacity
+        cap = self.engine.mem_config.capacity
         self.engine.get_tensor_addr(cap)
         self.engine.reset_addr()
         with self.assertRaises(OverflowError):
@@ -73,8 +74,6 @@ class TestMemoryEngineIssueRequest(unittest.TestCase):
     def setUp(self):
         self.engine = MemoryEngine(MemoryEngineConfig(
             memory_type=MemoryType.HBM,
-            dp_size=1,
-            storage_instance_num=1,
             media_config=MediaConfig(
                 media_type=MediaSystemBackend.ANALYTIC,
                 capacity=1.0,  # 1 GB
@@ -102,13 +101,6 @@ class TestMemoryEngineIssueRequest(unittest.TestCase):
         )
         self.assertEqual(metrics.memory_reqs_num, 3)  # Analytic: no decomposition
 
-    def test_issue_request_with_dp(self):
-        self.engine.mem_config.dp_size = 2
-        metrics = self.engine.issue_request(
-            [0], [64], [MemoryRequestType.KREAD]
-        )
-        self.assertEqual(metrics.memory_reqs_num, 2)
-
     def test_engine_metrics_accumulation(self):
         self.engine.issue_request([0], [64], [MemoryRequestType.KREAD])
         self.engine.issue_request([0], [128], [MemoryRequestType.KWRITE])
@@ -129,16 +121,17 @@ class TestMemoryEngineConfig(unittest.TestCase):
     def test_default_config(self):
         config = MemoryEngineConfig()
         self.assertEqual(config.memory_type, MemoryType.HBM)
-        self.assertEqual(config.dp_size, 1)
-        self.assertEqual(config.storage_instance_num, 1)
 
-    def test_invalid_dp_size(self):
-        with self.assertRaises(ValueError):
-            MemoryEngineConfig(dp_size=0)
-
-    def test_invalid_storage_instance_num(self):
-        with self.assertRaises(ValueError):
-            MemoryEngineConfig(storage_instance_num=0)
+    def test_single_instance_capacity_derivation(self):
+        """capacity is the per-instance capacity derived from media_config."""
+        config = MemoryEngineConfig(
+            media_config=MediaConfig(
+                media_type=MediaSystemBackend.ANALYTIC,
+                capacity=2.0,
+                bandwidth=100.0,
+            ),
+        )
+        self.assertEqual(config.capacity, 2 * 1024 ** 3)
 
 
 class TestMemoryEngineMetrics(unittest.TestCase):
@@ -170,7 +163,6 @@ class TestMemoryEngineMetrics(unittest.TestCase):
         """MQSim device IOPS is time-weighted across simulation batches."""
         em = MemoryEngineMetrics()
         m1 = MemoryMetrics(cycles=0, total_time=0.1, memory_reqs_num=1,
-                           global_memory_reqs_num=100,
                            iops=1000.0, iops_read=800.0, iops_write=200.0,
                            bandwidth=500.0)
         em.update(m1, total_bytes=50)
@@ -179,7 +171,6 @@ class TestMemoryEngineMetrics(unittest.TestCase):
         self.assertEqual(em.iops_write, 200.0)
 
         m2 = MemoryMetrics(cycles=0, total_time=0.2, memory_reqs_num=1,
-                           global_memory_reqs_num=100,
                            iops=500.0, iops_read=100.0, iops_write=400.0,
                            bandwidth=250.0)
         em.update(m2, total_bytes=50)
@@ -190,8 +181,7 @@ class TestMemoryEngineMetrics(unittest.TestCase):
     def test_engine_metrics_without_device_iops_remains_none(self):
         """Analytic/Ramulator metrics do not synthesize logical IOPS."""
         em = MemoryEngineMetrics()
-        m = MemoryMetrics(cycles=0, total_time=0.5, memory_reqs_num=1,
-                          global_memory_reqs_num=100)
+        m = MemoryMetrics(cycles=0, total_time=0.5, memory_reqs_num=1)
         em.update(m, total_bytes=1000)
         self.assertIsNone(em.iops)
         self.assertIsNone(em.iops_read)
