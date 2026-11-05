@@ -13,6 +13,7 @@ from typing import List, Optional
 from .memory_type import MemoryRequestType, MemoryType
 from .memory_request import MemoryRequest
 from .memory_metrics import MemoryMetrics, MemoryEngineMetrics
+from .media.analytic_media_system import AnalyticMediaSystem
 
 logger = logging.getLogger(__name__)
 
@@ -154,12 +155,15 @@ class MemoryEngine:
                 raise ValueError(f"size[{i}] must be > 0")
         if n == 0:
             return MemoryMetrics()
-        mem_reqs = [
-            MemoryRequest(addr[i], size[i], req_type[i], config=self.mem_config)
-            for i in range(n)
-        ]
-        total_media_metrics = self.media_system.handler_mem_request(mem_reqs)
-        simulated_bytes = sum(req.size for req in mem_reqs)
+        if isinstance(self.media_system, AnalyticMediaSystem):
+            total_media_metrics = self.media_system.handler_request_batch(size, req_type)
+        else:
+            mem_reqs = [
+                MemoryRequest(addr[i], size[i], req_type[i], config=self.mem_config)
+                for i in range(n)
+            ]
+            total_media_metrics = self.media_system.handler_mem_request(mem_reqs)
+        simulated_bytes = sum(size)
         mem_metrics = MemoryMetrics(
             cycles=total_media_metrics.cycles,
             total_time=total_media_metrics.time,

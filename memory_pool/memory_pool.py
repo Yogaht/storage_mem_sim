@@ -283,14 +283,27 @@ class MemoryPool:
         per_engine: Dict[
             int, Tuple["MemoryEngine", List[int], List[int], List[MemoryRequestType]]
         ] = {}
-        for i in range(n):
-            for engine, local, frag in self._split_range(addr[i], size[i]):
-                entry = per_engine.setdefault(
-                    engine.instance_id, (engine, [], [], [])
-                )
-                entry[1].append(local)
-                entry[2].append(frag)
-                entry[3].append(req_type[i])
+        if len(self._engines) == 1:
+            # 单实例全局基址为零，保留范围校验后直接复用只读请求列。
+            for address, length in zip(addr, size):
+                if address < 0:
+                    raise ValueError(f"addr must be >= 0, got {address}")
+                if length <= 0:
+                    raise ValueError(f"size_bytes must be > 0, got {length}")
+                if address + length > self._total_capacity:
+                    raise ValueError(f"range [{address}, {address + length}) exceeds pool capacity {self._total_capacity}")
+            engine = self._engines[0]
+            per_engine[engine.instance_id] = (engine, addr, size, req_type)
+        else:
+            for i in range(n):
+                for engine, local, frag in self._split_range(addr[i], size[i]):
+                    entry = per_engine.get(engine.instance_id)
+                    if entry is None:
+                        entry = (engine, [], [], [])
+                        per_engine[engine.instance_id] = entry
+                    entry[1].append(local)
+                    entry[2].append(frag)
+                    entry[3].append(req_type[i])
 
         total_time = 0.0
         total_cycles = 0
