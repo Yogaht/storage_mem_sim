@@ -9,6 +9,8 @@ from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 from ..memory_engine import MemoryEngineConfig
 from ..memory_metrics import MemoryMetrics
 from ..memory_type import MemoryRequestType, MemoryType
+from ..request_columns import compact_columns
+from ..media.analytic_media_system import AnalyticMediaSystem
 
 if TYPE_CHECKING:
     from ..memory_engine import MemoryEngine
@@ -279,6 +281,20 @@ class MemoryPool:
             raise ValueError("addr, size, req_type must have the same length")
         if n == 0:
             return MemoryMetrics()
+
+        columns = compact_columns(addr, size, req_type)
+        if columns is not None and all(isinstance(engine.media_system, AnalyticMediaSystem)
+                                       for engine in self._engines):
+            windows = [(engine.global_base, engine.global_base + engine.capacity_bytes)
+                       for engine in self._engines]
+            summaries = columns.summarize(windows, self._total_capacity)
+            # 全部范围通过校验后才登记任一实例，非法批次不能部分提交。
+            results = [engine._issue_analytic_summary(summary)
+                       for engine, summary in zip(self._engines, summaries) if summary[3]]
+            seconds = max((result.total_time for result in results), default=0.0)
+            return MemoryMetrics(total_time=seconds,
+                                 memory_reqs_num=sum(result.memory_reqs_num for result in results),
+                                 bandwidth=columns.total_bytes / seconds if seconds else 0.0)
 
         per_engine: Dict[
             int, Tuple["MemoryEngine", List[int], List[int], List[MemoryRequestType]]
