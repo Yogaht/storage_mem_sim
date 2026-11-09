@@ -66,13 +66,30 @@ class AnalyticMediaSystem(BaseMediaSystem):
             elif mem_req.req_type == MemoryRequestType.KWRITE:
                 num_write += 1
 
+        return self._record_batch(total_bytes, num_read, num_write, len(mem_req_list))
+
+    def handler_request_batch(self, sizes: List[int], types: List[MemoryRequestType]) -> MediaMetrics:
+        """直接处理已校验的请求列，保持逐请求计数而不创建临时请求对象。
+
+        调用链：MemoryEngine.issue_request → 本方法 → _record_batch。
+        Args:
+            sizes: 各请求的真实字节数。
+            types: 与 sizes 等长的请求类型序列。
+        Returns:
+            本批时延及请求计数，并更新介质累计指标。
+        """
+        return self._record_batch(sum(sizes), types.count(MemoryRequestType.KREAD),
+                                  types.count(MemoryRequestType.KWRITE), len(sizes))
+
+    def _record_batch(self, total_bytes: int, num_read: int, num_write: int, count: int) -> MediaMetrics:
+        """按真实字节和原始请求数量统一计算并登记 Analytic 指标。"""
         total_time = total_bytes / self._bandwidth_bytes_per_sec
         metrics = MediaMetrics(
             num_read_requests=num_read,
             num_write_requests=num_write,
             num_other_requests=0,
             cycles=0,
-            num_media_reqs=len(mem_req_list),
+            num_media_reqs=count,
             time=total_time,
             bandwidth=self._bandwidth_bytes_per_sec if total_time > 0 else 0.0,
         )

@@ -13,6 +13,8 @@ from typing import List, Optional
 from .memory_type import MemoryRequestType, MemoryType
 from .memory_request import MemoryRequest
 from .memory_metrics import MemoryMetrics, MemoryEngineMetrics
+from .media.analytic_media_system import AnalyticMediaSystem
+from .request_columns import compact_columns
 
 logger = logging.getLogger(__name__)
 
@@ -147,6 +149,12 @@ class MemoryEngine:
         n = len(addr)
         if len(size) != n or len(req_type) != n:
             raise ValueError("addr, size, req_type must have the same length")
+        columns = compact_columns(addr, size, req_type)
+        if columns is not None and isinstance(self.media_system, AnalyticMediaSystem):
+            upper = max((max(run.bases) + columns.offset
+                         + (run.count - 1) * run.stride + run.size for run in columns.runs), default=0)
+            summary = columns.summarize([(0, upper)])[0]
+            return self._issue_analytic_summary(summary)
         for i in range(n):
             if addr[i] < 0:
                 raise ValueError(f"addr[{i}] must be >= 0")
@@ -154,12 +162,15 @@ class MemoryEngine:
                 raise ValueError(f"size[{i}] must be > 0")
         if n == 0:
             return MemoryMetrics()
-        mem_reqs = [
-            MemoryRequest(addr[i], size[i], req_type[i], config=self.mem_config)
-            for i in range(n)
-        ]
-        total_media_metrics = self.media_system.handler_mem_request(mem_reqs)
-        simulated_bytes = sum(req.size for req in mem_reqs)
+        if isinstance(self.media_system, AnalyticMediaSystem):
+            total_media_metrics = self.media_system.handler_request_batch(size, req_type)
+        else:
+            mem_reqs = [
+                MemoryRequest(addr[i], size[i], req_type[i], config=self.mem_config)
+                for i in range(n)
+            ]
+            total_media_metrics = self.media_system.handler_mem_request(mem_reqs)
+        simulated_bytes = sum(size)
         mem_metrics = MemoryMetrics(
             cycles=total_media_metrics.cycles,
             total_time=total_media_metrics.time,
@@ -171,6 +182,26 @@ class MemoryEngine:
         )
         self.engine_metrics.update(mem_metrics, simulated_bytes)
         return mem_metrics
+
+    def _issue_analytic_summary(self, summary: tuple[int, int, int, int]) -> MemoryMetrics:
+        """消费池或本实例已完整校验的汇总，保留原始请求计数和累计字节。
+
+        调用链：issue_request / MemoryPool → 本方法 → Analytic._record_batch。
+        Args:
+            summary: 字节数、读请求数、写请求数、总请求数。
+        Returns:
+            本实例此次调用的内存指标。
+        """
+        size, reads, writes, count = summary
+        if not count:
+            return MemoryMetrics()
+        media = self.media_system._record_batch(size, reads, writes, count)
+        metrics = MemoryMetrics(cycles=media.cycles, total_time=media.time,
+                                memory_reqs_num=count, bandwidth=media.bandwidth,
+                                iops=media.iops, iops_read=media.iops_read,
+                                iops_write=media.iops_write)
+        self.engine_metrics.update(metrics, size)
+        return metrics
 
     def get_engine_metrics(self) -> MemoryEngineMetrics:
         """返回同步路径的累计指标。"""
